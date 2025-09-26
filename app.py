@@ -38,6 +38,11 @@ def register():
         cpf = request.form['cpf']
         cep = request.form['cep']
 
+        # Verificar se o CPF já existe
+        existing_user = User.query.filter_by(cpf=cpf).first()
+        if existing_user:
+            return render_template('register.html', error='CPF já cadastrado')
+
         # Buscar endereço a partir do CEP
         response = requests.get(f'https://viacep.com.br/ws/{cep}/json/')
         address_data = response.json()
