@@ -710,6 +710,7 @@ class Web2PrintIntegration {
                 wp_die(__('Permissão insuficiente', 'web2print-integration'));
             }
             
+            // Configurações da API
             update_option('web2print_api_endpoint', sanitize_url($_POST['api_endpoint']));
             
             // Só atualizar API key se não for o placeholder de asteriscos
@@ -717,22 +718,54 @@ class Web2PrintIntegration {
             if (!empty($new_api_key) && $new_api_key !== str_repeat('*', 20)) {
                 update_option('web2print_api_key', $new_api_key);
             }
+            
+            // Configurações de monitoramento
+            update_option('web2print_alert_email', sanitize_email($_POST['alert_email']));
+            update_option('web2print_slow_threshold', intval($_POST['slow_threshold']));
+            update_option('web2print_check_interval', intval($_POST['check_interval']));
+            update_option('web2print_email_alerts', isset($_POST['email_alerts']) ? 1 : 0);
+            update_option('web2print_monitoring_enabled', isset($_POST['monitoring_enabled']) ? 1 : 0);
+            
             echo '<div class="notice notice-success"><p>' . __('Configurações salvas!', 'web2print-integration') . '</p></div>';
         }
         
         $api_endpoint = get_option('web2print_api_endpoint', '');
         $api_key = get_option('web2print_api_key', '');
+        
+        // Configurações de monitoramento
+        $alert_email = get_option('web2print_alert_email', get_option('admin_email'));
+        $slow_threshold = get_option('web2print_slow_threshold', 5000);
+        $check_interval = get_option('web2print_check_interval', 5);
+        $email_alerts = get_option('web2print_email_alerts', true);
+        $monitoring_enabled = get_option('web2print_monitoring_enabled', true);
+        
+        // Status atual da API
+        $api_status = get_transient('web2print_api_status');
+        $last_check = get_transient('web2print_last_check');
         ?>
         <div class="wrap">
             <h1><?php _e('Configurações Web2Print', 'web2print-integration'); ?></h1>
+            
+            <?php if ($api_status): ?>
+            <div class="web2print-status-summary" style="margin: 20px 0; padding: 15px; border-left: 4px solid <?php echo $api_status === 'healthy' ? '#46b450' : ($api_status === 'slow' ? '#ffb900' : '#dc3232'); ?>; background: <?php echo $api_status === 'healthy' ? '#f7fcf0' : ($api_status === 'slow' ? '#fffbf0' : '#fef7f7'); ?>;">
+                <h3><?php _e('Status da API:', 'web2print-integration'); ?> <?php echo $this->get_status_display($api_status); ?></h3>
+                <?php if ($last_check): ?>
+                    <p><?php _e('Última verificação:', 'web2print-integration'); ?> <?php echo $last_check; ?></p>
+                <?php endif; ?>
+                <p><a href="<?php echo admin_url('tools.php?page=web2print-monitor'); ?>" class="button button-secondary">🔍 <?php _e('Ver Dashboard Completo', 'web2print-integration'); ?></a></p>
+            </div>
+            <?php endif; ?>
+            
             <form method="post" action="">
                 <?php wp_nonce_field('web2print_settings', 'web2print_nonce'); ?>
+                
+                <h2><?php _e('🔗 Conexão com API', 'web2print-integration'); ?></h2>
                 <table class="form-table">
                     <tr>
                         <th scope="row"><?php _e('Endpoint da API', 'web2print-integration'); ?></th>
                         <td>
-                            <input type="url" name="api_endpoint" value="<?php echo esc_attr($api_endpoint); ?>" class="regular-text" />
-                            <p class="description"><?php _e('Ex: https://seu-dominio.com/api/v1/calculate_final', 'web2print-integration'); ?></p>
+                            <input type="url" name="api_endpoint" value="<?php echo esc_attr($api_endpoint); ?>" class="regular-text" required />
+                            <p class="description"><?php _e('Ex: https://seu-app.replit.app/api/v1/calculate_final', 'web2print-integration'); ?></p>
                         </td>
                     </tr>
                     <tr>
@@ -746,8 +779,98 @@ class Web2PrintIntegration {
                         </td>
                     </tr>
                 </table>
-                <?php submit_button(); ?>
+                
+                <h2><?php _e('🔍 Monitoramento da API', 'web2print-integration'); ?></h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php _e('Ativar Monitoramento', 'web2print-integration'); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="monitoring_enabled" value="1" <?php checked($monitoring_enabled); ?> />
+                                <?php _e('Monitorar automaticamente a saúde da API', 'web2print-integration'); ?>
+                            </label>
+                            <p class="description"><?php _e('Quando ativo, verifica a API automaticamente e envia alertas em caso de problemas.', 'web2print-integration'); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Intervalo de Verificação', 'web2print-integration'); ?></th>
+                        <td>
+                            <select name="check_interval">
+                                <option value="2" <?php selected($check_interval, 2); ?>><?php _e('2 minutos', 'web2print-integration'); ?></option>
+                                <option value="5" <?php selected($check_interval, 5); ?>><?php _e('5 minutos', 'web2print-integration'); ?></option>
+                                <option value="10" <?php selected($check_interval, 10); ?>><?php _e('10 minutos', 'web2print-integration'); ?></option>
+                                <option value="15" <?php selected($check_interval, 15); ?>><?php _e('15 minutos', 'web2print-integration'); ?></option>
+                            </select>
+                            <p class="description"><?php _e('Com que frequência verificar a saúde da API.', 'web2print-integration'); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Limite de Lentidão', 'web2print-integration'); ?></th>
+                        <td>
+                            <input type="number" name="slow_threshold" value="<?php echo esc_attr($slow_threshold); ?>" min="1000" max="30000" step="500" /> ms
+                            <p class="description"><?php _e('Tempo de resposta acima do qual a API é considerada lenta.', 'web2print-integration'); ?></p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <h2><?php _e('📧 Alertas por Email', 'web2print-integration'); ?></h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row"><?php _e('Ativar Alertas por Email', 'web2print-integration'); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="email_alerts" value="1" <?php checked($email_alerts); ?> />
+                                <?php _e('Enviar alertas por email quando houver problemas', 'web2print-integration'); ?>
+                            </label>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Email para Alertas', 'web2print-integration'); ?></th>
+                        <td>
+                            <input type="email" name="alert_email" value="<?php echo esc_attr($alert_email); ?>" class="regular-text" />
+                            <p class="description"><?php _e('Email que receberá os alertas de problemas com a API.', 'web2print-integration'); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php _e('Teste de Alerta', 'web2print-integration'); ?></th>
+                        <td>
+                            <button type="button" onclick="sendTestAlert()" class="button button-secondary">
+                                📧 <?php _e('Enviar Email de Teste', 'web2print-integration'); ?>
+                            </button>
+                            <p class="description"><?php _e('Envie um email de teste para verificar se os alertas estão funcionando.', 'web2print-integration'); ?></p>
+                        </td>
+                    </tr>
+                </table>
+                
+                <?php submit_button(__('Salvar Configurações', 'web2print-integration')); ?>
             </form>
+            
+            <script>
+            function sendTestAlert() {
+                const button = event.target;
+                button.disabled = true;
+                button.textContent = '<?php _e('Enviando...', 'web2print-integration'); ?>';
+                
+                fetch(ajaxurl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'action=web2print_send_test_alert&nonce=<?php echo wp_create_nonce('web2print_test_alert'); ?>'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.data.message || '<?php _e('Email enviado!', 'web2print-integration'); ?>');
+                })
+                .catch(error => {
+                    alert('<?php _e('Erro ao enviar:', 'web2print-integration'); ?> ' + error);
+                })
+                .finally(() => {
+                    button.disabled = false;
+                    button.textContent = '📧 <?php _e('Enviar Email de Teste', 'web2print-integration'); ?>';
+                });
+            }
+            </script>
         </div>
         <?php
     }
