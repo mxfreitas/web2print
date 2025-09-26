@@ -98,3 +98,23 @@ Preferred communication style: Simple, everyday language.
 - **WordPress Hooks**: Implemented `woocommerce_before_calculate_totals` and `woocommerce_add_to_cart` for seamless integration
 - **Admin Interface**: Configuration page for API endpoint and authentication key management
 - **Production Ready**: Complete plugin ready for installation and deployment in WordPress/WooCommerce stores
+
+## September 26, 2025 - MAJOR ARCHITECTURAL OPTIMIZATION: Centralized PDF Analysis
+- **New Flask API Route**: `/api/v1/analyze_pdf_url` endpoint for centralized PDF analysis via URL
+  - **PyMuPDF Integration**: High-precision color detection using advanced PDF processing library
+  - **Intelligent Fallback**: Automatic fallback to PyPDF2 if PyMuPDF unavailable, with method tracking
+  - **Production Security**: Comprehensive SSRF protection, API key authentication, file validation
+- **WordPress Integration Optimization**: Plugin modified to send PDF URLs to Flask instead of local analysis
+  - **analyze_pdf_via_flask()**: New method for secure API communication with Flask backend
+  - **Session Management**: Complete analysis data persistence in WooCommerce session for validation
+  - **File Workflow**: Maintains permanent PDF storage for print shop access while leveraging Flask precision
+- **Security Hardening**: Production-ready security implementations
+  - **SSRF Protection**: IPv4/IPv6 validation, private IP blocking, redirect prevention
+  - **API Authentication**: Mandatory API key with production environment validation
+  - **Content Validation**: Strict Content-Type checking and file size limits (50MB)
+  - **Resource Management**: Guaranteed temporary file cleanup and stream-based downloads
+- **System Benefits**:
+  - **Accuracy**: PyMuPDF provides superior color detection compared to regex-based analysis
+  - **Centralization**: Single source of truth for PDF analysis logic in Flask backend
+  - **Security**: Enterprise-grade security protections for production deployment
+  - **Maintainability**: Centralized analysis logic reduces code duplication between systems
