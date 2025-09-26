@@ -136,16 +136,51 @@ def upload():
             if not user:
                 return jsonify({'error': 'Usuário não encontrado. Faça o registro novamente.'}), 400
 
-            # Ler o PDF e contar páginas
-            pdf_reader = PyPDF2.PdfReader(file.stream)
-            num_pages = len(pdf_reader.pages)
+            # Ler o PDF e contar páginas com tratamento robusto
+            try:
+                # Primeira tentativa: ler diretamente do stream
+                file.stream.seek(0)  # Garantir que está no início
+                
+                # Verificar se o arquivo começa com header PDF válido
+                header = file.stream.read(8)
+                if not header.startswith(b'%PDF-'):
+                    return jsonify({'error': 'Arquivo não é um PDF válido'}), 400
+                
+                # Voltar ao início para leitura completa
+                file.stream.seek(0)
+                
+                # Tentar ler com PyPDF2
+                pdf_reader = PyPDF2.PdfReader(file.stream)
+                num_pages = len(pdf_reader.pages)
+                
+            except Exception as pdf_error:
+                # Se falhar, tentar método alternativo salvando temporariamente
+                try:
+                    # Salvar temporariamente para leitura
+                    file.stream.seek(0)
+                    temp_path = os.path.join('uploads', f'temp_{file.filename}')
+                    file.save(temp_path)
+                    
+                    # Tentar ler do arquivo salvo
+                    with open(temp_path, 'rb') as temp_file:
+                        pdf_reader = PyPDF2.PdfReader(temp_file)
+                        num_pages = len(pdf_reader.pages)
+                    
+                    # Remover arquivo temporário
+                    os.remove(temp_path)
+                    
+                except Exception:
+                    return jsonify({'error': 'PDF corrompido ou inválido. Tente outro arquivo.'}), 400
+            
+            except Exception as e:
+                return jsonify({'error': 'Erro ao processar PDF. Verifique se o arquivo está válido.'}), 400
 
             # Atualizar informações do usuário
             user.uploaded_file = file.filename
             user.num_pages = num_pages
             db.session.commit()
 
-            # Salvar o arquivo
+            # Salvar o arquivo final
             file.stream.seek(0)  # Voltar ao início do stream
             file.save(os.path.join('uploads', file.filename))
 
