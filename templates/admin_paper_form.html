@@ -136,6 +136,7 @@
             {% endwith %}
             
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label for="name">Nome do Tipo de Papel *</label>
                     <input type="text" name="name" id="name" class="form-control" required

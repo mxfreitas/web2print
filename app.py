@@ -1,26 +1,38 @@
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
-import fitz  # PyMuPDF para análise de cores
+# import fitz  # PyMuPDF para análise de cores - TEMPORARIAMENTE DESABILITADO
 import os
 import requests
 import uuid
 import hashlib
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from flask_wtf.csrf import CSRFProtect
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.secret_key = 'web2print-secret-key-2024-replit-env'  # Chave secreta configurada
 
-# Configurações de sessão
-app.config['SESSION_COOKIE_SECURE'] = False  # Para desenvolvimento
+# SEGURANÇA: Configuração de chave secreta e sessões
+secret_key = os.getenv('SECRET_KEY', 'web2print-secret-key-2024-replit-env')
+is_production = os.getenv('FLASK_ENV') == 'production' or os.getenv('ENV') == 'production'
+
+# CRÍTICO: Não permitir chave padrão em produção
+if is_production and secret_key == 'web2print-secret-key-2024-replit-env':
+    raise RuntimeError("ERRO DE SEGURANÇA: SECRET_KEY deve ser definida em produção! Configure a variável de ambiente SECRET_KEY com uma chave secreta forte.")
+
+app.secret_key = secret_key
+
+# Configurações de sessão seguras
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('HTTPS_ENABLED', 'False').lower() == 'true'  # True em produção com HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'  # Mais restritivo para admin
 app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutos
 
 db = SQLAlchemy(app)
+csrf = CSRFProtect(app)  # Proteção CSRF
 app.app_context().push()
 
 class User(db.Model):
@@ -194,14 +206,9 @@ def populate_initial_data():
             )
             db.session.add(finishing)
         
-        # Criar admin padrão (senha: admin123)
-        import hashlib
-        admin_password = hashlib.sha256("admin123".encode()).hexdigest()
-        admin_user = Admin(
-            username="admin",
-            password_hash=admin_password
-        )
-        db.session.add(admin_user)
+        # SEGURANÇA: Não criar admin padrão - deve ser criado manualmente
+        # Para criar admin, execute: flask create-admin
+        print("⚠️  Para criar um usuário admin, execute: flask create-admin")
         
         db.session.commit()
         print("✅ Dados iniciais inseridos no banco de dados!")
@@ -209,6 +216,102 @@ def populate_initial_data():
     except Exception as e:
         db.session.rollback()
         print(f"❌ Erro ao inserir dados iniciais: {str(e)}")
+
+# ============================================
+# COMANDO CLI PARA CRIAR ADMIN SEGURO
+# ============================================
+
+@app.cli.command()
+def create_admin():
+    """Criar usuário administrador com senha segura"""
+    import getpass
+    
+    print("🔐 Criação de Usuário Administrador")
+    print("=" * 40)
+    
+    username = input("Digite o nome de usuário: ").strip()
+    if not username:
+        print("❌ Nome de usuário é obrigatório!")
+        return
+    
+    # Verificar se admin já existe
+    existing_admin = Admin.query.filter_by(username=username).first()
+    if existing_admin:
+        print(f"❌ Admin '{username}' já existe!")
+        return
+    
+    # Solicitar senha de forma segura (oculta)
+    password = getpass.getpass("Digite a senha: ")
+    password_confirm = getpass.getpass("Confirme a senha: ")
+    
+    if password != password_confirm:
+        print("❌ Senhas não coincidem!")
+        return
+    
+    if len(password) < 8:
+        print("❌ Senha deve ter pelo menos 8 caracteres!")
+        return
+    
+    try:
+        # Criar hash seguro da senha
+        password_hash = generate_password_hash(password)
+        
+        # Criar admin
+        admin = Admin(
+            username=username,
+            password_hash=password_hash,
+            active=True
+        )
+        
+        db.session.add(admin)
+        db.session.commit()
+        
+        print(f"✅ Admin '{username}' criado com sucesso!")
+        print("🔒 Senha foi criptografada com Werkzeug password hashing")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro ao criar admin: {str(e)}")
+
+@app.cli.command()
+def reset_admin_password():
+    """Resetar senha de um administrador"""
+    import getpass
+    
+    print("🔄 Reset de Senha de Administrador")
+    print("=" * 40)
+    
+    username = input("Digite o nome de usuário: ").strip()
+    if not username:
+        print("❌ Nome de usuário é obrigatório!")
+        return
+    
+    admin = Admin.query.filter_by(username=username).first()
+    if not admin:
+        print(f"❌ Admin '{username}' não encontrado!")
+        return
+    
+    password = getpass.getpass("Digite a nova senha: ")
+    password_confirm = getpass.getpass("Confirme a nova senha: ")
+    
+    if password != password_confirm:
+        print("❌ Senhas não coincidem!")
+        return
+    
+    if len(password) < 8:
+        print("❌ Senha deve ter pelo menos 8 caracteres!")
+        return
+    
+    try:
+        # Atualizar hash da senha
+        admin.password_hash = generate_password_hash(password)
+        db.session.commit()
+        
+        print(f"✅ Senha do admin '{username}' foi resetada com sucesso!")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro ao resetar senha: {str(e)}")
 
 # Popular dados iniciais na inicialização
 populate_initial_data()
@@ -543,15 +646,14 @@ def admin_login():
             flash('Usuário e senha são obrigatórios', 'error')
             return render_template('admin_login.html')
         
-        # Hash da senha fornecida
-        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        # Buscar admin pelo username
+        admin = Admin.query.filter_by(username=username, active=True).first()
         
-        # Verificar credenciais
-        admin = Admin.query.filter_by(username=username, password_hash=password_hash, active=True).first()
-        
-        if admin:
+        # SEGURANÇA: Usar Werkzeug password hashing
+        if admin and check_password_hash(admin.password_hash, password):
             session['admin_logged_in'] = True
             session['admin_username'] = username
+            session.permanent = True  # Usar tempo de sessão configurado
             flash('Login realizado com sucesso!', 'success')
             return redirect(url_for('admin_dashboard'))
         else:
