@@ -247,26 +247,30 @@ class Web2PrintIntegration {
                 return;
             }
             
-            // Análise básica do PDF usando funções do WordPress/PHP
+            // ANÁLISE PRECISA VIA FLASK API (PyMuPDF)
+            // Enviar URL do arquivo salvo para análise centralizada no Flask
+            $flask_analysis = $this->analyze_pdf_via_flask($uploaded_file['url']);
+            
+            if (!$flask_analysis) {
+                wp_send_json_error(array(
+                    'message' => __('Erro na análise do PDF. Tente novamente.', 'web2print-integration')
+                ));
+                return;
+            }
+            
+            // Usar dados precisos retornados pelo Flask
+            $page_count = $flask_analysis['total_pages'];
+            $color_pages = $flask_analysis['color_pages'];
+            $mono_pages = $flask_analysis['mono_pages'];
+            
+            // Hash local para consistência
             $pdf_content = file_get_contents($uploaded_file['file']);
-            
-            // Contar páginas aproximadamente (implementação básica)
-            $page_count = $this->count_pdf_pages($pdf_content);
-            
-            // Análise determinística básica de cores (produção usaria biblioteca especializada)
-            // Usar hash do conteúdo para gerar resultados consistentes
             $content_hash = md5($pdf_content);
-            $hash_num = hexdec(substr($content_hash, 0, 8));
-            
-            // Gerar proporção de páginas coloridas baseada no hash (0-40% do total)
-            $color_ratio = ($hash_num % 40) / 100;
-            $color_pages = floor($page_count * $color_ratio);
-            $mono_pages = $page_count - $color_pages;
             
             // Gerar token de verificação criptográfico
             $verification_token = wp_generate_password(32, false);
             
-            // Salvar análise VERIFICADA na sessão com token E URL DO ARQUIVO
+            // CRÍTICO: Salvar dados completos da análise na sessão
             $analysis = array(
                 'total_pages' => $page_count,
                 'color_pages' => $color_pages,
@@ -278,7 +282,8 @@ class Web2PrintIntegration {
                 'file_path' => $uploaded_file['file'], // Caminho completo no servidor
                 'verified' => true, // CRÍTICO: marca como verificado pelo servidor
                 'verification_token' => $verification_token,
-                'timestamp' => time()
+                'timestamp' => time(),
+                'analysis_method' => $flask_analysis['analysis_method'] ?? 'flask_analysis'
             );
             
             WC()->session->set('web2print_pdf_analysis', $analysis);
@@ -292,9 +297,56 @@ class Web2PrintIntegration {
         }
     }
     
+    private function analyze_pdf_via_flask($pdf_url) {
+        // CRÍTICO: Análise centralizada via Flask API com PyMuPDF
+        if (empty($this->api_endpoint) || empty($this->api_key)) {
+            error_log('Web2Print: API endpoint ou key não configurados para análise');
+            return false;
+        }
+        
+        // Preparar URL da rota de análise
+        $analyze_url = rtrim($this->api_endpoint, '/') . '/analyze_pdf_url';
+        
+        $args = array(
+            'method' => 'POST',
+            'timeout' => 45, // Tempo maior para download + análise
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'X-API-Key' => $this->api_key
+            ),
+            'body' => json_encode(array(
+                'pdf_url' => $pdf_url
+            ))
+        );
+        
+        $response = wp_remote_post($analyze_url, $args);
+        
+        if (is_wp_error($response)) {
+            error_log('Web2Print Flask Analysis Error: ' . $response->get_error_message());
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (wp_remote_retrieve_response_code($response) !== 200) {
+            error_log('Web2Print Flask Analysis HTTP Error: ' . wp_remote_retrieve_response_code($response));
+            error_log('Response body: ' . $body);
+            return false;
+        }
+        
+        if (!$data['success']) {
+            error_log('Web2Print Flask Analysis API Error: ' . $data['error']);
+            return false;
+        }
+        
+        // Retornar dados da análise precisos do Flask
+        return $data['data'];
+    }
+    
     private function count_pdf_pages($pdf_content) {
-        // Método básico para contar páginas em PDF
-        // Em produção, use uma biblioteca como pdf-parser
+        // DEPRECATED: Método básico mantido como fallback
+        // Análise agora é feita via Flask/PyMuPDF para precisão
         preg_match_all('/\/Page\W/', $pdf_content, $matches);
         $page_count = count($matches[0]);
         

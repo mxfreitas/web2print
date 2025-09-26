@@ -1,7 +1,7 @@
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
-# import fitz  # PyMuPDF para análise de cores - TEMPORARIAMENTE DESABILITADO
+# PyMuPDF será importado dinamicamente quando necessário
 import os
 import requests
 import uuid
@@ -1251,6 +1251,249 @@ def api_health():
             'service': 'web2print-api',
             'error': str(e),
             'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/v1/analyze_pdf_url', methods=['POST', 'OPTIONS'])
+def api_analyze_pdf_url():
+    """
+    Endpoint para análise de PDF via URL - WordPress Plugin Integration
+    Baixa PDF temporariamente e analisa com PyMuPDF para precisão máxima
+    
+    POST /api/v1/analyze_pdf_url
+    Content-Type: application/json
+    {
+        "pdf_url": "https://exemplo.com/uploads/arquivo.pdf"
+    }
+    """
+    # CORS headers para WordPress
+    if request.method == 'OPTIONS':
+        return '', 200, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+        }
+    
+    try:
+        # CRÍTICO: Verificar autenticação via API Key
+        api_key = request.headers.get('X-API-Key') 
+        expected_key = os.getenv('WEB2PRINT_API_KEY')
+        
+        # SEGURANÇA: Não permitir chave padrão em produção
+        if not expected_key:
+            if is_production:
+                return jsonify({
+                    'success': False,
+                    'error': 'WEB2PRINT_API_KEY deve ser configurada em produção',
+                    'error_code': 'PRODUCTION_KEY_REQUIRED'
+                }), 500
+            expected_key = 'web2print-dev-key-only'
+        
+        if not api_key or api_key != expected_key:
+            return jsonify({
+                'success': False,
+                'error': 'API Key inválida ou ausente',
+                'error_code': 'UNAUTHORIZED'
+            }), 401
+        
+        # Parsing JSON
+        data = request.get_json()
+        if not data or 'pdf_url' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'URL do PDF é obrigatória',
+                'error_code': 'MISSING_URL'
+            }), 400
+        
+        pdf_url = data['pdf_url']
+        
+        # SEGURANÇA: Validação robusta de URL para prevenir SSRF
+        from urllib.parse import urlparse
+        import ipaddress
+        
+        parsed = urlparse(pdf_url)
+        if parsed.scheme not in ('http', 'https'):
+            return jsonify({
+                'success': False,
+                'error': 'URL inválida - deve usar http:// ou https://',
+                'error_code': 'INVALID_URL_SCHEME'
+            }), 400
+        
+        # SEGURANÇA ROBUSTA: Verificar TODAS as IPs (IPv4 e IPv6) 
+        try:
+            import socket
+            hostname = parsed.hostname or ''
+            
+            # Resolver todos os IPs (A e AAAA records)
+            try:
+                addr_info = socket.getaddrinfo(hostname, None)
+            except socket.gaierror:
+                return jsonify({
+                    'success': False,
+                    'error': 'Não foi possível resolver hostname',
+                    'error_code': 'DNS_RESOLUTION_FAILED'
+                }), 400
+            
+            for family, type, proto, canonname, sockaddr in addr_info:
+                ip = sockaddr[0]  # IP está sempre no primeiro elemento
+                try:
+                    ip_obj = ipaddress.ip_address(ip)
+                    
+                    # Bloquear IPs privados/locais/reservados (IPv4 e IPv6)
+                    if (ip_obj.is_private or ip_obj.is_loopback or 
+                        ip_obj.is_link_local or ip_obj.is_reserved or
+                        ip_obj.is_multicast):
+                        return jsonify({
+                            'success': False,
+                            'error': f'IP {ip} é interno/privado - bloqueado por segurança',
+                            'error_code': 'SSRF_BLOCKED'
+                        }), 403
+                        
+                except ValueError:
+                    # IP inválido
+                    return jsonify({
+                        'success': False,
+                        'error': f'IP inválido detectado: {ip}',
+                        'error_code': 'INVALID_IP'
+                    }), 400
+                    
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'Erro na validação de segurança: {str(e)}',
+                'error_code': 'SECURITY_CHECK_FAILED'
+            }), 400
+        
+        # Validação adicional: deve ter extensão .pdf
+        if not pdf_url.lower().endswith('.pdf'):
+            return jsonify({
+                'success': False,
+                'error': 'URL deve apontar para arquivo .pdf',
+                'error_code': 'INVALID_FILE_TYPE'
+            }), 400
+        
+        # Baixar PDF temporariamente via requests
+        try:
+            print(f"[INFO] Baixando PDF de: {pdf_url}")
+            # SEGURANÇA: Bloquear redirects para prevenir SSRF via redirect  
+            response = requests.get(pdf_url, timeout=30, stream=True, allow_redirects=False)
+            
+            # Verificar se é redirect
+            if response.status_code in (301, 302, 303, 307, 308):
+                return jsonify({
+                    'success': False,
+                    'error': 'Redirects não são permitidos por segurança',
+                    'error_code': 'REDIRECT_BLOCKED'
+                }), 403
+                
+            response.raise_for_status()
+            
+            # CRÍTICO: Limite de tamanho para prevenir ataques
+            max_size = 50 * 1024 * 1024  # 50MB máximo
+            content_length = response.headers.get('content-length')
+            if content_length and int(content_length) > max_size:
+                return jsonify({
+                    'success': False,
+                    'error': 'Arquivo muito grande. Máximo 50MB.',
+                    'error_code': 'FILE_TOO_LARGE'
+                }), 400
+            
+            # CRÍTICO: Verificar Content-Type rigorosamente
+            content_type = response.headers.get('content-type', '')
+            if not content_type.startswith('application/pdf'):
+                return jsonify({
+                    'success': False,
+                    'error': f'Content-Type inválido: {content_type}. Apenas application/pdf é aceito.',
+                    'error_code': 'INVALID_CONTENT_TYPE'
+                }), 400
+            
+        except requests.exceptions.RequestException as e:
+            print(f"[ERROR] Falha ao baixar PDF: {str(e)}")
+            return jsonify({
+                'success': False,
+                'error': f'Erro ao baixar arquivo: {str(e)}',
+                'error_code': 'DOWNLOAD_ERROR'
+            }), 400
+        
+        # Salvar temporariamente para análise
+        import tempfile
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
+                # CRÍTICO: Baixar conteúdo com limite rigoroso de tamanho
+                downloaded = 0
+                for chunk in response.iter_content(chunk_size=64*1024):  # 64KB chunks
+                    if chunk:
+                        downloaded += len(chunk)
+                        if downloaded > max_size:
+                            # CRÍTICO: Limpar arquivo parcial antes de retornar erro
+                            try:
+                                os.remove(temp_file.name)
+                            except:
+                                pass
+                            return jsonify({
+                                'success': False,
+                                'error': 'Arquivo excedeu limite durante download',
+                                'error_code': 'DOWNLOAD_SIZE_EXCEEDED'
+                            }), 400
+                        temp_file.write(chunk)
+                temp_path = temp_file.name
+            
+            print(f"[INFO] PDF salvo temporariamente: {temp_path}")
+            
+            # ANÁLISE COM PyMuPDF (se disponível) ou fallback
+            try:
+                # Verificar se PyMuPDF está disponível
+                import fitz
+                color_stats = analyze_pdf_colors(temp_path)
+                analysis_method = 'PyMuPDF_precise'
+                print(f"[INFO] Análise PyMuPDF concluída: {color_stats}")
+            except ImportError:
+                # Fallback para análise básica se PyMuPDF não disponível
+                print("[WARNING] PyMuPDF não disponível, usando análise básica")
+                with open(temp_path, 'rb') as pdf_file:
+                    import PyPDF2
+                    pdf_reader = PyPDF2.PdfReader(pdf_file)
+                    total_pages = len(pdf_reader.pages)
+                    # Assumir 30% colorido como estimativa conservadora
+                    color_pages = max(1, int(total_pages * 0.3))
+                    mono_pages = total_pages - color_pages
+                    
+                color_stats = {
+                    'total_pages': total_pages,
+                    'color_pages': color_pages,
+                    'mono_pages': mono_pages,
+                    'color_type': 'mixed' if color_pages > 0 else 'mono'
+                }
+                analysis_method = 'PyPDF2_estimate'
+            
+            # Retornar dados de análise
+            return jsonify({
+                'success': True,
+                'data': {
+                    'total_pages': color_stats['total_pages'],
+                    'color_pages': color_stats['color_pages'], 
+                    'mono_pages': color_stats['mono_pages'],
+                    'color_type': color_stats['color_type'],
+                    'analysis_method': analysis_method
+                },
+                'message': f'PDF analisado com sucesso via {analysis_method}'
+            }), 200
+            
+        finally:
+            # CRÍTICO: SEMPRE limpar arquivo temporário
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                    print(f"[INFO] Arquivo temporário removido: {temp_path}")
+                except Exception as cleanup_error:
+                    print(f"[WARNING] Erro ao limpar temp file: {cleanup_error}")
+    
+    except Exception as e:
+        print(f"[ERROR] Erro na análise PDF via URL: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': f'Erro interno: {str(e)}',
+            'error_code': 'INTERNAL_ERROR'
         }), 500
 
 # ============================================
