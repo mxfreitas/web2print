@@ -1,0 +1,267 @@
+/* Web2Print Integration Styles */
+
+.web2print-calculator {
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+.web2print-calculator h3 {
+    margin-top: 0;
+    color: #2c3e50;
+    border-bottom: 2px solid #3498db;
+    padding-bottom: 10px;
+}
+
+.web2print-calculator h4 {
+    color: #34495e;
+    margin-top: 25px;
+    margin-bottom: 15px;
+}
+
+/* Upload Section */
+.upload-section {
+    margin-bottom: 30px;
+}
+
+.upload-zone {
+    border: 2px dashed #bdc3c7;
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    background: #ecf0f1;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.upload-zone:hover,
+.upload-zone.dragover {
+    border-color: #3498db;
+    background: #e3f2fd;
+}
+
+.upload-content .upload-icon {
+    font-size: 3em;
+    display: block;
+    margin-bottom: 10px;
+}
+
+.btn-upload {
+    background: #3498db;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+.btn-upload:hover {
+    background: #2980b9;
+}
+
+.file-info {
+    background: #e8f5e8;
+    border: 1px solid #27ae60;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 10px;
+}
+
+.analysis-loading {
+    text-align: center;
+    color: #7f8c8d;
+    font-style: italic;
+    padding: 20px 0;
+}
+
+.pdf-analysis {
+    background: white;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 15px;
+}
+
+.analysis-result h4 {
+    margin-top: 0;
+    color: #27ae60;
+}
+
+/* Configuration Section */
+.web2print-config-section {
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.web2print-config-section.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.config-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.config-col {
+    flex: 1;
+}
+
+.config-col-full {
+    flex: 1 1 100%;
+}
+
+.config-row label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.config-row select,
+.config-row input[type="number"] {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #bdc3c7;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.finishing-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.finishing-options label {
+    display: flex;
+    align-items: center;
+    font-weight: normal;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.finishing-options input {
+    margin-right: 8px;
+}
+
+/* Cost Result */
+.cost-result {
+    margin: 20px 0;
+}
+
+.calculating {
+    text-align: center;
+    color: #3498db;
+    font-style: italic;
+    padding: 20px 0;
+}
+
+.cost-breakdown {
+    background: white;
+    border: 1px solid #27ae60;
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.cost-breakdown h4 {
+    margin-top: 0;
+    color: #27ae60;
+}
+
+.cost-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 15px;
+}
+
+.cost-table td {
+    padding: 8px 0;
+    border-bottom: 1px solid #ecf0f1;
+}
+
+.cost-table tr.cost-subtotal td,
+.cost-table tr.cost-total td {
+    border-top: 2px solid #27ae60;
+    padding-top: 12px;
+    font-weight: bold;
+}
+
+.cost-table tr.cost-total td {
+    font-size: 1.1em;
+    color: #27ae60;
+}
+
+.config-summary {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 4px;
+    margin-top: 15px;
+}
+
+.config-summary h5 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #2c3e50;
+}
+
+.config-summary p {
+    margin: 5px 0;
+    font-size: 14px;
+}
+
+.error-message {
+    background: #e74c3c;
+    color: white;
+    padding: 15px;
+    border-radius: 4px;
+    text-align: center;
+}
+
+/* Add to Cart Button */
+.add-to-cart-section {
+    text-align: center;
+    margin-top: 30px;
+}
+
+.btn-add-to-cart {
+    background: #27ae60;
+    color: white;
+    border: none;
+    padding: 15px 30px;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.btn-add-to-cart:hover:not(:disabled) {
+    background: #219a52;
+}
+
+.btn-add-to-cart:disabled {
+    background: #bdc3c7;
+    cursor: not-allowed;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .config-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .finishing-options {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .cost-table {
+        font-size: 14px;
+    }
+}
