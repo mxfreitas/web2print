@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carrinho - Web2Print</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Carrinho de Compras</h1>
+        <p>Número de páginas a serem impressas: <strong>{{ num_pages }}</strong></p>
+        <p>Preço por página: R$ 0.50</p>
+        <p>Total: R$ {{ num_pages * 0.50 }}</p>
+        <a href="/">Fazer novo upload</a>
+    </div>
+</body>
+</html>
