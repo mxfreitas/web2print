@@ -766,6 +766,392 @@ def admin_finishings_create():
     return render_template('admin_finishing_form.html')
 
 # ============================================
+# API ENDPOINTS PARA INTEGRAÇÃO EXTERNA (WOOCOMMERCE)
+# ============================================
+
+from datetime import datetime
+
+def validate_api_request(request):
+    """Validar requisição API com key segura obrigatória"""
+    # Verificar API key (obrigatória via environment)
+    api_key = request.headers.get('X-API-Key')
+    expected_key = os.environ.get('API_KEY')
+    
+    if not expected_key:
+        return False, 'API não configurada corretamente - contate o administrador'
+    
+    if not api_key:
+        return False, 'Cabeçalho X-API-Key é obrigatório'
+    
+    if api_key != expected_key:
+        return False, 'API key inválida'
+    
+    return True, None
+
+def get_cors_origin(request):
+    """Determinar origem CORS permitida com validação rigorosa"""
+    origin = request.headers.get('Origin', '')
+    
+    # Lista exata de origens permitidas para WooCommerce
+    allowed_origins = [
+        'http://localhost:3000',
+        'https://localhost:3000',
+        'http://localhost:8080',
+        'https://localhost:8080'
+    ]
+    
+    # Permitir subdomínios específicos do WooCommerce/WordPress
+    allowed_domains = [
+        '.woocommerce.com',
+        '.wordpress.com',
+        '.woocommerce.org',
+        '.wordpress.org'
+    ]
+    
+    if not origin:
+        # Para testes locais sem Origin header
+        return '*'
+    
+    # Verificar origem exata
+    if origin in allowed_origins:
+        return origin
+    
+    # Verificar subdomínios permitidos
+    for domain in allowed_domains:
+        if origin.endswith(domain) and ('://' in origin):
+            # Validar que é HTTPS para domínios remotos
+            if origin.startswith('https://'):
+                return origin
+    
+    return None
+
+@app.route('/api/v1/calculate_final', methods=['POST', 'OPTIONS'])
+def api_calculate_final():
+    """
+    Endpoint dedicado para WooCommerce calcular custo final avançado
+    
+    POST /api/v1/calculate_final
+    Content-Type: application/json
+    
+    Request JSON:
+    {
+        "color_pages": 5,
+        "mono_pages": 10,
+        "paper_type": "sulfite",
+        "paper_weight": 90,
+        "binding_type": "spiral", 
+        "finishing": "laminacao,verniz",
+        "copy_quantity": 2
+    }
+    
+    Response JSON:
+    {
+        "success": true,
+        "cost_details": {
+            "pages_cost": 1.50,
+            "binding_cost": 5.00,
+            "finishing_cost": 5.50,
+            "cost_per_copy": 12.00,
+            "total_cost": 24.00,
+            "copy_quantity": 2
+        },
+        "breakdown": {
+            "paper_info": "Sulfite 90g",
+            "binding_info": "Espiral plástica",
+            "finishing_info": "Laminação, Verniz"
+        },
+        "timestamp": "2024-09-26T15:30:00Z"
+    }
+    """
+    
+    # Handle CORS preflight requests
+    if request.method == 'OPTIONS':
+        cors_origin = get_cors_origin(request)
+        if not cors_origin:
+            return jsonify({'error': 'Origem não permitida'}), 403
+            
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', cors_origin)
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        if cors_origin != '*':
+            response.headers.add('Vary', 'Origin')
+        return response
+    
+    try:
+        # Validar API key e origem
+        is_valid, error_msg = validate_api_request(request)
+        cors_origin = get_cors_origin(request)
+        
+        if not is_valid:
+            response = jsonify({
+                'success': False,
+                'error': error_msg,
+                'error_code': 'UNAUTHORIZED'
+            })
+            if cors_origin:
+                response.headers.add('Access-Control-Allow-Origin', cors_origin)
+            return response, 401
+        
+        if not cors_origin:
+            return jsonify({
+                'success': False,
+                'error': 'Origem não permitida',
+                'error_code': 'FORBIDDEN_ORIGIN'
+            }), 403
+        
+        # Log da requisição para debugging (sem dados sensíveis)
+        print(f"[API] WooCommerce request at {datetime.now()}")
+        print(f"[API] Content-Type: {request.content_type}")
+        print(f"[API] Method: {request.method}")
+        print(f"[API] Origin: {request.headers.get('Origin', 'N/A')}")
+        
+        # Verificar Content-Type
+        if not request.is_json:
+            response = jsonify({
+                'success': False,
+                'error': 'Content-Type deve ser application/json',
+                'error_code': 'INVALID_CONTENT_TYPE'
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Obter dados JSON
+        data = request.get_json()
+        
+        if not data:
+            response = jsonify({
+                'success': False,
+                'error': 'Corpo da requisição JSON é obrigatório',
+                'error_code': 'MISSING_JSON_BODY'
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Validação de campos obrigatórios
+        required_fields = ['color_pages', 'mono_pages']
+        missing_fields = [field for field in required_fields if field not in data]
+        
+        if missing_fields:
+            response = jsonify({
+                'success': False,
+                'error': f'Campos obrigatórios ausentes: {", ".join(missing_fields)}',
+                'error_code': 'MISSING_REQUIRED_FIELDS',
+                'missing_fields': missing_fields
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Extrair e validar parâmetros
+        try:
+            color_pages = int(data.get('color_pages', 0))
+            mono_pages = int(data.get('mono_pages', 0))
+            paper_type = str(data.get('paper_type', 'sulfite')).strip().lower()
+            paper_weight = int(data.get('paper_weight', 90))
+            binding_type = str(data.get('binding_type', 'grampo')).strip().lower()
+            finishing = str(data.get('finishing', '')).strip().lower() if data.get('finishing') else ''
+            copy_quantity = int(data.get('copy_quantity', 1))
+            
+        except (ValueError, TypeError):
+            response = jsonify({
+                'success': False,
+                'error': 'Tipos de dados inválidos. Verifique os valores numéricos.',
+                'error_code': 'INVALID_DATA_TYPES'
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Validação de valores
+        if color_pages < 0 or mono_pages < 0:
+            return jsonify({
+                'success': False,
+                'error': 'Número de páginas não pode ser negativo',
+                'error_code': 'INVALID_PAGE_COUNT'
+            }), 400
+        
+        if color_pages + mono_pages == 0:
+            return jsonify({
+                'success': False,
+                'error': 'Total de páginas deve ser maior que zero',
+                'error_code': 'ZERO_PAGES'
+            }), 400
+        
+        if copy_quantity <= 0:
+            return jsonify({
+                'success': False,
+                'error': 'Quantidade de cópias deve ser maior que zero',
+                'error_code': 'INVALID_QUANTITY'
+            }), 400
+        
+        if copy_quantity > 1000:
+            return jsonify({
+                'success': False,
+                'error': 'Quantidade máxima de cópias é 1000',
+                'error_code': 'QUANTITY_EXCEEDED'
+            }), 400
+        
+        # Validar limites superiores rigorosos
+        if color_pages + mono_pages > 500:
+            response = jsonify({
+                'success': False,
+                'error': 'Total de páginas excede o limite máximo de 500',
+                'error_code': 'PAGE_LIMIT_EXCEEDED'
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Validar peso do papel nos valores permitidos
+        valid_weights = [75, 90, 115, 120, 150]
+        if paper_weight not in valid_weights:
+            paper_weight = 90  # Default seguro
+        
+        # Validar tipos de papel rigorosamente
+        valid_paper_types = ['sulfite', 'couche', 'reciclado']
+        if paper_type not in valid_paper_types:
+            response = jsonify({
+                'success': False,
+                'error': f'Tipo de papel inválido. Valores permitidos: {", ".join(valid_paper_types)}',
+                'error_code': 'INVALID_PAPER_TYPE'
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Validar tipos de encadernação rigorosamente
+        valid_binding_types = ['grampo', 'spiral', 'wire-o', 'capa-dura']
+        if binding_type not in valid_binding_types:
+            response = jsonify({
+                'success': False,
+                'error': f'Tipo de encadernação inválido. Valores permitidos: {", ".join(valid_binding_types)}',
+                'error_code': 'INVALID_BINDING_TYPE'
+            })
+            response.headers.add('Access-Control-Allow-Origin', cors_origin or '*')
+            return response, 400
+        
+        # Limpar e validar acabamentos
+        if finishing:
+            finishing = finishing.strip()
+            if finishing:
+                valid_finishings = ['laminacao', 'verniz', 'dobra', 'perfuracao']
+                finishing_list = [f.strip() for f in finishing.split(',')]
+                finishing_list = [f for f in finishing_list if f in valid_finishings]
+                finishing = ','.join(finishing_list) if finishing_list else None
+            else:
+                finishing = None
+        
+        # Calcular custo usando função existente
+        cost_details = calculate_advanced_cost(
+            color_pages=color_pages,
+            mono_pages=mono_pages,
+            paper_type=paper_type,
+            paper_weight=paper_weight,
+            binding_type=binding_type,
+            finishing=finishing,
+            copy_quantity=copy_quantity
+        )
+        
+        # Preparar informações descritivas
+        paper_info = f"{paper_type.title()} {paper_weight}g"
+        
+        binding_names = {
+            'grampo': 'Grampo (2 grampos)',
+            'spiral': 'Espiral plástica',
+            'wire-o': 'Wire-o (espiral metálica)',
+            'capa-dura': 'Capa dura'
+        }
+        binding_info = binding_names.get(binding_type, binding_type.title())
+        
+        finishing_info = ''
+        if finishing:
+            finishing_names = {
+                'laminacao': 'Laminação',
+                'verniz': 'Verniz',
+                'dobra': 'Dobra',
+                'perfuracao': 'Perfuração'
+            }
+            finishing_list = [finishing_names.get(f.strip(), f.strip().title()) 
+                            for f in finishing.split(',')]
+            finishing_info = ', '.join(finishing_list)
+        
+        # Resposta estruturada para WooCommerce
+        response_data = {
+            'success': True,
+            'cost_details': cost_details,
+            'breakdown': {
+                'paper_info': paper_info,
+                'binding_info': binding_info,
+                'finishing_info': finishing_info,
+                'total_pages': color_pages + mono_pages,
+                'color_pages': color_pages,
+                'mono_pages': mono_pages
+            },
+            'request_summary': {
+                'paper_type': paper_type,
+                'paper_weight': paper_weight,
+                'binding_type': binding_type,
+                'finishing': finishing,
+                'copy_quantity': copy_quantity
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Log da resposta para debugging
+        print(f"[API] Successful calculation: R$ {cost_details['total_cost']}")
+        
+        # Configurar resposta com CORS
+        response = jsonify(response_data)
+        response.headers.add('Access-Control-Allow-Origin', cors_origin)
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        response.headers.add('Content-Type', 'application/json; charset=utf-8')
+        if cors_origin != '*':
+            response.headers.add('Vary', 'Origin')
+        
+        return response
+        
+    except Exception as e:
+        # Log detalhado do erro
+        print(f"[API] Error in calculate_final: {str(e)}")
+        print(f"[API] Error type: {type(e).__name__}")
+        
+        # Configurar resposta de erro com CORS
+        cors_origin = get_cors_origin(request) or '*'
+        response = jsonify({
+            'success': False,
+            'error': 'Erro interno do servidor ao calcular custos',
+            'error_code': 'INTERNAL_ERROR',
+            'timestamp': datetime.now().isoformat()
+        })
+        response.headers.add('Access-Control-Allow-Origin', cors_origin)
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        if cors_origin != '*':
+            response.headers.add('Vary', 'Origin')
+        return response, 500
+
+@app.route('/api/v1/health', methods=['GET'])
+def api_health():
+    """Endpoint de verificação de saúde da API"""
+    try:
+        # Verificar conexão com banco de dados
+        from sqlalchemy import text
+        db.session.execute(text('SELECT 1'))
+        
+        return jsonify({
+            'status': 'healthy',
+            'service': 'web2print-api',
+            'version': '1.0',
+            'timestamp': datetime.now().isoformat(),
+            'database': 'connected'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'service': 'web2print-api',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+# ============================================
 # ROTAS PRINCIPAIS DO SISTEMA (EXISTENTES)
 # ============================================
 

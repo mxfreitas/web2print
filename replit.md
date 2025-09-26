@@ -64,3 +64,26 @@ Preferred communication style: Simple, everyday language.
 ## File System Dependencies
 - **Upload Directory**: Local storage for PDF files with secure naming
 - **Static Assets**: CSS, JavaScript, and image files served via Flask static routing
+
+# Recent Changes & Updates
+
+## September 26, 2025 - WooCommerce API Integration
+- **New API Endpoints**: Implemented dedicated REST API endpoints for WooCommerce integration
+  - `/api/v1/calculate_final`: Main endpoint for cost calculations with JSON request/response
+  - `/api/v1/health`: Health check endpoint for API monitoring
+- **Security Features**: Comprehensive input validation, CORS support, structured error handling
+- **Integration Ready**: Full compatibility with WooCommerce REST API ecosystem and webhooks
+- **Production Quality**: Robust error handling, logging, and structured JSON responses
+
+## API Integration Features
+- **Input Validation**: Complete validation of color_pages, mono_pages, paper types, weights, binding, and finishing options
+- **CORS Support**: Cross-origin resource sharing configured for WooCommerce domains
+- **Error Handling**: Structured error responses with specific error codes for debugging
+- **Fallback Logic**: Intelligent defaults and closest-match algorithms for invalid inputs
+- **Logging System**: Detailed request/response logging for integration monitoring and debugging
+
+## WooCommerce Compatibility
+- **JSON Request/Response**: Clean API interface following REST best practices
+- **Flexible Parameters**: Support for optional parameters with intelligent defaults
+- **Cost Breakdown**: Detailed cost structure including pages, binding, finishing, and total costs
+- **Business Logic**: Direct integration with existing `calculate_advanced_cost` function using database-driven pricing
