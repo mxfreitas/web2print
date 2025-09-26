@@ -66,22 +66,43 @@ def upload():
         return redirect(url_for('register'))
 
     if request.method == 'POST':
-        file = request.files['file']
-        if file and file.filename.endswith('.pdf'):
-            pdf_reader = PyPDF2.PdfReader(file)
+        try:
+            # Verificar se o arquivo foi enviado
+            if 'file' not in request.files:
+                return jsonify({'error': 'Nenhum arquivo foi enviado'}), 400
+            
+            file = request.files['file']
+            
+            # Verificar se um arquivo foi selecionado
+            if file.filename == '' or file.filename is None:
+                return jsonify({'error': 'Nenhum arquivo foi selecionado'}), 400
+            
+            # Verificar se é um arquivo PDF
+            if not file.filename.lower().endswith('.pdf'):
+                return jsonify({'error': 'Apenas arquivos PDF são aceitos'}), 400
+
+            # Buscar o usuário na sessão
+            user = User.query.filter_by(cpf=session['cpf']).first()
+            if not user:
+                return jsonify({'error': 'Usuário não encontrado. Faça o registro novamente.'}), 400
+
+            # Ler o PDF e contar páginas
+            pdf_reader = PyPDF2.PdfReader(file.stream)
             num_pages = len(pdf_reader.pages)
 
-            user = User.query.filter_by(cpf=session['cpf']).first()
+            # Atualizar informações do usuário
             user.uploaded_file = file.filename
             user.num_pages = num_pages
             db.session.commit()
 
             # Salvar o arquivo
+            file.stream.seek(0)  # Voltar ao início do stream
             file.save(os.path.join('uploads', file.filename))
 
             return jsonify({'pages': num_pages})
-        else:
-            return jsonify({'error': 'Invalid file type'}), 400
+            
+        except Exception as e:
+            return jsonify({'error': f'Erro ao processar arquivo: {str(e)}'}), 500
 
     return render_template('upload.html')
 
