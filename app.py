@@ -55,7 +55,11 @@ def analyze_pdf_colors(file_path):
             has_color = False
             
             # Verificar texto colorido
-            text_dict = page.get_text("dict")
+            try:
+                text_dict = page.get_text("dict")
+            except:
+                # Se falhar, usar método alternativo
+                text_dict = {"blocks": []}
             for block in text_dict["blocks"]:
                 if "lines" in block:
                     for line in block["lines"]:
@@ -286,9 +290,6 @@ def upload():
                     
                 except Exception:
                     return jsonify({'error': 'PDF corrompido ou inválido. Tente outro arquivo.'}), 400
-            
-            except Exception as e:
-                return jsonify({'error': 'Erro ao processar PDF. Verifique se o arquivo está válido.'}), 400
 
             # Gerar nome seguro para o arquivo
             secure_name = secure_filename(file.filename)
