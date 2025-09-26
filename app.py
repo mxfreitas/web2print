@@ -411,13 +411,73 @@ def upload():
                 'color_type': color_stats['color_type'],
                 'color_pages': color_stats['color_pages'],
                 'mono_pages': color_stats['mono_pages'],
-                'estimated_cost': estimated_cost
+                'estimated_cost': estimated_cost,
+                'redirect_to_configure': True
             })
             
         except Exception as e:
             return jsonify({'error': f'Erro ao processar arquivo: {str(e)}'}), 500
 
     return render_template('upload.html')
+
+@app.route('/configure', methods=['GET', 'POST'])
+def configure():
+    if 'cpf' not in session:
+        return redirect(url_for('register'))
+
+    user = User.query.filter_by(cpf=session['cpf']).first()
+    if not user or not user.uploaded_file:
+        return redirect(url_for('upload'))
+
+    if request.method == 'POST':
+        try:
+            # Obter configurações do formulário
+            print_type = request.form.get('print_type', 'mixed')
+            paper_type = request.form.get('paper_type', 'sulfite')
+            paper_weight = int(request.form.get('paper_weight', 90))
+            binding_type = request.form.get('binding_type', 'grampo')
+            finishing = request.form.get('finishing', '')
+            copy_quantity = int(request.form.get('copy_quantity', 1))
+
+            # Calcular páginas baseado no tipo de impressão escolhido
+            if print_type == 'color':
+                # Imprimir tudo em cores
+                color_pages_final = user.color_pages + user.mono_pages
+                mono_pages_final = 0
+            elif print_type == 'mono':
+                # Imprimir tudo em monocromático
+                color_pages_final = 0
+                mono_pages_final = user.color_pages + user.mono_pages
+            else:  # mixed
+                # Manter separação original
+                color_pages_final = user.color_pages
+                mono_pages_final = user.mono_pages
+
+            # Calcular custo avançado
+            cost_details = calculate_advanced_cost(
+                color_pages_final, mono_pages_final,
+                paper_type, paper_weight, binding_type,
+                finishing if finishing else None, copy_quantity
+            )
+
+            # Atualizar configurações do usuário
+            user.print_type = print_type
+            user.paper_type = paper_type
+            user.paper_weight = paper_weight
+            user.binding_type = binding_type
+            user.finishing = finishing if finishing else None
+            user.copy_quantity = copy_quantity
+            user.total_cost = cost_details['total_cost']
+            user.order_configured = True
+            
+            db.session.commit()
+
+            return redirect(url_for('cart'))
+
+        except Exception as e:
+            return render_template('configure.html', user=user, error=f'Erro ao salvar configuração: {str(e)}')
+
+    return render_template('configure.html', user=user)
 
 @app.route('/cart')
 def cart():
