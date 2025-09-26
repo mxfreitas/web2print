@@ -239,18 +239,7 @@
             }
         });
 
-        // Coletar acabamentos selecionados
-        document.getElementById('configForm').addEventListener('submit', function(e) {
-            const checkedFinishing = Array.from(document.querySelectorAll('input[name="finishing"]:checked'))
-                .map(cb => cb.value);
-            
-            // Criar campo hidden com acabamentos
-            const finishingInput = document.createElement('input');
-            finishingInput.type = 'hidden';
-            finishingInput.name = 'finishing';
-            finishingInput.value = checkedFinishing.join(',');
-            this.appendChild(finishingInput);
-        });
+        // Formulário será enviado normalmente - acabamentos serão tratados pelo getlist() no backend
     </script>
 </body>
 </html>

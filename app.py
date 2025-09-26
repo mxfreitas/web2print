@@ -436,7 +436,11 @@ def configure():
             paper_type = request.form.get('paper_type', 'sulfite')
             paper_weight = int(request.form.get('paper_weight', 90))
             binding_type = request.form.get('binding_type', 'grampo')
-            finishing = request.form.get('finishing', '')
+            
+            # Obter acabamentos selecionados (múltiplos checkboxes)
+            finishing_list = request.form.getlist('finishing')
+            finishing = ','.join(finishing_list) if finishing_list else None
+            
             copy_quantity = int(request.form.get('copy_quantity', 1))
 
             # Calcular páginas baseado no tipo de impressão escolhido
@@ -490,15 +494,42 @@ def cart():
         return render_template('cart.html', 
                              error="Nenhum arquivo foi enviado ainda. Faça o upload primeiro.")
     
-    # Preparar dados para o template
-    cart_data = {
-        'filename': user.uploaded_file,
-        'num_pages': user.num_pages or 0,
-        'color_type': user.color_type or 'monocromatico',
-        'color_pages': user.color_pages or 0,
-        'mono_pages': user.mono_pages or 0,
-        'estimated_cost': user.estimated_cost or 0.0
-    }
+    # Verificar se o pedido foi configurado
+    if user.order_configured:
+        # Calcular páginas baseado no tipo de impressão escolhido
+        if user.print_type == 'color':
+            # Tudo em cores
+            color_pages_final = user.color_pages + user.mono_pages
+            mono_pages_final = 0
+        elif user.print_type == 'mono':
+            # Tudo em P&B
+            color_pages_final = 0
+            mono_pages_final = user.color_pages + user.mono_pages
+        else:  # mixed
+            # Manter separação original
+            color_pages_final = user.color_pages or 0
+            mono_pages_final = user.mono_pages or 0
+        
+        # Recalcular custo detalhado para exibição
+        cost_details = calculate_advanced_cost(
+            color_pages_final, mono_pages_final,
+            user.paper_type or 'sulfite', user.paper_weight or 90,
+            user.binding_type or 'grampo', user.finishing,
+            user.copy_quantity or 1
+        )
+        
+        cart_data = {
+            'user': user,
+            'configured': True,
+            'cost_details': cost_details
+        }
+    else:
+        # Mostrar dados básicos e link para configuração
+        cart_data = {
+            'user': user,
+            'configured': False,
+            'basic_cost': user.estimated_cost or 0.0
+        }
     
     return render_template('cart.html', **cart_data)
 
