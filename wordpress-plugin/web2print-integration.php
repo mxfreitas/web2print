@@ -71,7 +71,9 @@ class Web2PrintIntegration {
                 'texts' => array(
                     'calculating' => __('Calculando...', 'web2print-integration'),
                     'error' => __('Erro ao calcular. Tente novamente.', 'web2print-integration'),
-                    'invalid_file' => __('Por favor, selecione um arquivo PDF válido.', 'web2print-integration')
+                    'invalid_file' => __('Formato inválido. Apenas PDFs são aceitos.', 'web2print-integration'),
+                    'file_too_large' => __('Arquivo muito grande. Máximo 50MB.', 'web2print-integration'),
+                    'upload_error' => __('Erro no upload. Tente novamente.', 'web2print-integration')
                 )
             ));
             
@@ -181,6 +183,51 @@ class Web2PrintIntegration {
         return $data;
     }
     
+    /**
+     * Validação robusta de arquivo PDF - server-side
+     */
+    private function validate_pdf_file_robust($file) {
+        // 1. Verificar extensão e MIME type
+        $file_info = wp_check_filetype_and_ext($file['tmp_name'], $file['name'], array('pdf' => 'application/pdf'));
+        
+        if (!$file_info['type'] || $file_info['type'] !== 'application/pdf') {
+            return __('Formato inválido. Apenas PDFs são aceitos.', 'web2print-integration');
+        }
+        
+        // 2. Verificar magic bytes (assinatura do PDF)
+        $file_content = file_get_contents($file['tmp_name'], false, null, 0, 5);
+        if (!$file_content || substr($file_content, 0, 4) !== '%PDF') {
+            return __('Formato inválido. Apenas PDFs são aceitos.', 'web2print-integration');
+        }
+        
+        // 3. Verificar tamanho máximo (50MB para consistência com cliente)
+        $max_size = 50 * 1024 * 1024; // 50MB
+        if ($file['size'] > $max_size) {
+            return __('Arquivo muito grande. Máximo 50MB.', 'web2print-integration');
+        }
+        
+        // 4. Verificar tamanho mínimo (pelo menos 1KB)
+        if ($file['size'] < 1024) {
+            return __('Formato inválido. Apenas PDFs são aceitos.', 'web2print-integration');
+        }
+        
+        // 5. Verificar se arquivo não está corrompido (tentativa básica de abertura)
+        $temp_handle = fopen($file['tmp_name'], 'rb');
+        if (!$temp_handle) {
+            return __('Formato inválido. Apenas PDFs são aceitos.', 'web2print-integration');
+        }
+        
+        // Verificar se consegue ler os primeiros 100 bytes
+        $header = fread($temp_handle, 100);
+        fclose($temp_handle);
+        
+        if (strlen($header) < 10) {
+            return __('Formato inválido. Apenas PDFs são aceitos.', 'web2print-integration');
+        }
+        
+        return null; // Arquivo válido
+    }
+    
     public function ajax_upload_pdf() {
         // Verificar nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'web2print_nonce')) {
@@ -197,29 +244,11 @@ class Web2PrintIntegration {
         
         $file = $_FILES['pdf_file'];
         
-        // Validação rigorosa de tipo de arquivo
-        $file_info = wp_check_filetype_and_ext($file['tmp_name'], $file['name'], array('pdf' => 'application/pdf'));
-        
-        if (!$file_info['type'] || $file_info['type'] !== 'application/pdf') {
+        // VALIDAÇÃO ROBUSTA SERVER-SIDE
+        $validation_error = $this->validate_pdf_file_robust($file);
+        if ($validation_error) {
             wp_send_json_error(array(
-                'message' => __('Apenas arquivos PDF são permitidos', 'web2print-integration')
-            ));
-            return;
-        }
-        
-        // Verificar assinatura do arquivo PDF
-        $file_content = file_get_contents($file['tmp_name'], false, null, 0, 5);
-        if (substr($file_content, 0, 4) !== '%PDF') {
-            wp_send_json_error(array(
-                'message' => __('Arquivo não é um PDF válido', 'web2print-integration')
-            ));
-            return;
-        }
-        
-        // Validar tamanho (máximo 10MB)
-        if ($file['size'] > 10 * 1024 * 1024) {
-            wp_send_json_error(array(
-                'message' => __('Arquivo muito grande. Máximo 10MB.', 'web2print-integration')
+                'message' => $validation_error
             ));
             return;
         }

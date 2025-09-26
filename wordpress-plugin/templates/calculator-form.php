@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
         <h4><?php _e('1. Upload do Arquivo PDF', 'web2print-integration'); ?></h4>
         
         <div id="web2print_upload_zone" class="upload-zone">
-            <input type="file" id="web2print_pdf_file" accept=".pdf" style="display: none;">
+            <input type="file" id="web2print_pdf_file" accept=".pdf,application/pdf" style="display: none;">
             <div class="upload-content">
                 <span class="upload-icon">📁</span>
                 <p><?php _e('Clique para selecionar ou arraste seu arquivo PDF aqui', 'web2print-integration'); ?></p>

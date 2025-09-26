@@ -55,9 +55,10 @@ jQuery(document).ready(function($) {
             
             if (!file) return;
             
-            // Validar se é PDF
-            if (file.type !== 'application/pdf') {
-                Web2PrintCalculator.showError(web2print_ajax.texts.invalid_file);
+            // VALIDAÇÃO ROBUSTA DE PDF
+            var validation_error = Web2PrintCalculator.validatePDFFile(file);
+            if (validation_error) {
+                Web2PrintCalculator.showError(validation_error);
                 return;
             }
             
@@ -69,6 +70,31 @@ jQuery(document).ready(function($) {
             
             // Upload REAL do arquivo para análise server-side
             Web2PrintCalculator.uploadPDF(file);
+        },
+        
+        validatePDFFile: function(file) {
+            // 1. Verificar extensão do arquivo
+            if (!file.name.toLowerCase().endsWith('.pdf')) {
+                return web2print_ajax.texts.invalid_file;
+            }
+            
+            // 2. Verificar MIME type
+            if (file.type !== 'application/pdf') {
+                return web2print_ajax.texts.invalid_file;
+            }
+            
+            // 3. Verificar tamanho (máximo 50MB)
+            var maxSize = 50 * 1024 * 1024; // 50MB
+            if (file.size > maxSize) {
+                return web2print_ajax.texts.file_too_large;
+            }
+            
+            // 4. Verificar tamanho mínimo (pelo menos 1KB)
+            if (file.size < 1024) {
+                return web2print_ajax.texts.invalid_file;
+            }
+            
+            return null; // Arquivo válido
         },
         
         uploadPDF: function(file) {
@@ -115,12 +141,30 @@ jQuery(document).ready(function($) {
                         Web2PrintCalculator.calculateCost();
                         
                     } else {
-                        Web2PrintCalculator.showError(response.data.message || 'Erro ao analisar PDF');
+                        Web2PrintCalculator.showError(response.data.message || web2print_ajax.texts.error);
                     }
                 },
-                error: function() {
+                error: function(xhr) {
                     $('.analysis-loading').hide();
-                    Web2PrintCalculator.showError('Erro no upload. Tente novamente.');
+                    
+                    // ERRO HANDLING MELHORADO - mostrar mensagens específicas do servidor
+                    var error_msg = web2print_ajax.texts.upload_error;
+                    
+                    try {
+                        if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                            error_msg = xhr.responseJSON.data.message;
+                        } else if (xhr.responseText) {
+                            var response = JSON.parse(xhr.responseText);
+                            if (response.data && response.data.message) {
+                                error_msg = response.data.message;
+                            }
+                        }
+                    } catch (e) {
+                        // Se não conseguir parsear, usar mensagem padrão
+                        console.log('Erro ao parsear resposta do servidor:', e);
+                    }
+                    
+                    Web2PrintCalculator.showError(error_msg);
                 }
             });
         },
