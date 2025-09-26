@@ -52,11 +52,38 @@ class Web2PrintIntegration {
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
         add_action('woocommerce_admin_order_item_values', array($this, 'display_web2print_order_details'), 10, 3);
         add_action('wp_ajax_web2print_download_pdf', array($this, 'secure_pdf_download'));
+        
+        // SISTEMA DE MONITORAMENTO DA API
+        add_action('wp', array($this, 'schedule_api_monitoring'));
+        add_action('web2print_monitor_api', array($this, 'monitor_api_health'));
+        add_action('admin_notices', array($this, 'display_api_status_notices'));
+        add_filter('woocommerce_add_to_cart_validation', array($this, 'check_api_before_add_to_cart'), 5, 3);
     }
     
     public function init() {
         // Carregar texto do domínio
         load_plugin_textdomain('web2print-integration', false, dirname(plugin_basename(__FILE__)) . '/languages/');
+        
+        // Inicializar configurações padrão de alertas
+        $this->init_alert_settings();
+    }
+    
+    /**
+     * Inicializar configurações padrão de alertas
+     */
+    private function init_alert_settings() {
+        if (get_option('web2print_alert_email') === false) {
+            update_option('web2print_alert_email', get_option('admin_email'));
+        }
+        if (get_option('web2print_slow_threshold') === false) {
+            update_option('web2print_slow_threshold', 5000); // 5 segundos
+        }
+        if (get_option('web2print_email_alerts') === false) {
+            update_option('web2print_email_alerts', true);
+        }
+        if (get_option('web2print_check_interval') === false) {
+            update_option('web2print_check_interval', 5); // 5 minutos
+        }
     }
     
     public function enqueue_scripts() {
@@ -655,6 +682,15 @@ class Web2PrintIntegration {
             'web2print-settings',
             array($this, 'admin_page')
         );
+        
+        // Página de monitoramento
+        add_management_page(
+            __('Monitoramento Web2Print API', 'web2print-integration'),
+            __('Web2Print Monitor', 'web2print-integration'),
+            'manage_options',
+            'web2print-monitor',
+            array($this, 'monitor_dashboard_page')
+        );
     }
     
     public function admin_page() {
@@ -819,6 +855,251 @@ class Web2PrintIntegration {
         <?php
     }
     
+    // ============================================
+    // SISTEMA DE MONITORAMENTO DA API
+    // ============================================
+    
+    /**
+     * Agendar monitoramento automático da API
+     */
+    public function schedule_api_monitoring() {
+        $interval = get_option('web2print_check_interval', 5) * 60; // converter para segundos
+        
+        if (!wp_next_scheduled('web2print_monitor_api')) {
+            wp_schedule_event(time(), 'five_minutes', 'web2print_monitor_api');
+        }
+        
+        // Registrar intervalo personalizado se necessário
+        if (!wp_get_schedule('web2print_monitor_api')) {
+            add_filter('cron_schedules', function($schedules) use ($interval) {
+                $schedules['web2print_interval'] = array(
+                    'interval' => $interval,
+                    'display' => sprintf(__('A cada %d minutos', 'web2print-integration'), $interval / 60)
+                );
+                return $schedules;
+            });
+        }
+    }
+    
+    /**
+     * Monitorar saúde da API automaticamente
+     */
+    public function monitor_api_health() {
+        if (empty($this->api_endpoint) || empty($this->api_key)) {
+            return; // Não monitorar se não configurado
+        }
+        
+        $start_time = microtime(true);
+        $health_url = rtrim($this->api_endpoint, '/') . '/health';
+        
+        $response = wp_remote_get($health_url, array(
+            'timeout' => 10,
+            'headers' => array(
+                'X-API-Key' => $this->api_key
+            )
+        ));
+        
+        $response_time = (microtime(true) - $start_time) * 1000; // ms
+        $current_status = get_transient('web2print_api_status');
+        $slow_threshold = get_option('web2print_slow_threshold', 5000);
+        
+        // Salvar métricas
+        $this->save_api_metrics($response_time, $response);
+        
+        if (is_wp_error($response)) {
+            $this->handle_api_down($response->get_error_message(), $current_status);
+            return;
+        }
+        
+        $code = wp_remote_retrieve_response_code($response);
+        
+        if ($code !== 200) {
+            $this->handle_api_down("HTTP {$code}", $current_status);
+            return;
+        }
+        
+        if ($response_time > $slow_threshold) {
+            $this->handle_api_slow($response_time, $current_status);
+            return;
+        }
+        
+        $this->handle_api_healthy($response_time, $current_status);
+    }
+    
+    /**
+     * Tratar API indisponível
+     */
+    private function handle_api_down($error_message, $previous_status) {
+        set_transient('web2print_api_status', 'down', 300); // 5 minutos
+        set_transient('web2print_api_error', $error_message, 300);
+        set_transient('web2print_last_check', current_time('mysql'), 300);
+        
+        // Enviar alerta apenas se mudou de status
+        if ($previous_status !== 'down') {
+            $this->send_api_alert('down', "API indisponível: {$error_message}");
+        }
+        
+        // Log para debugging
+        error_log("[Web2Print Monitor] API DOWN: {$error_message}");
+    }
+    
+    /**
+     * Tratar API lenta
+     */
+    private function handle_api_slow($response_time, $previous_status) {
+        set_transient('web2print_api_status', 'slow', 300);
+        set_transient('web2print_api_response_time', $response_time, 300);
+        set_transient('web2print_last_check', current_time('mysql'), 300);
+        
+        // Enviar alerta apenas se mudou de status ou primeira detecção
+        if ($previous_status !== 'slow') {
+            $this->send_api_alert('slow', "API lenta: {$response_time}ms");
+        }
+        
+        error_log("[Web2Print Monitor] API SLOW: {$response_time}ms");
+    }
+    
+    /**
+     * Tratar API saudável
+     */
+    private function handle_api_healthy($response_time, $previous_status) {
+        set_transient('web2print_api_status', 'healthy', 300);
+        set_transient('web2print_api_response_time', $response_time, 300);
+        set_transient('web2print_last_check', current_time('mysql'), 300);
+        
+        // Enviar alerta de recuperação se estava com problema
+        if ($previous_status === 'down' || $previous_status === 'slow') {
+            $this->send_api_alert('recovered', "API recuperada: {$response_time}ms");
+        }
+    }
+    
+    /**
+     * Salvar métricas da API para histórico
+     */
+    private function save_api_metrics($response_time, $response) {
+        $metrics = get_option('web2print_api_metrics', array());
+        $timestamp = current_time('timestamp');
+        
+        // Manter apenas últimas 24 horas
+        $day_ago = $timestamp - (24 * 60 * 60);
+        $metrics = array_filter($metrics, function($metric) use ($day_ago) {
+            return $metric['timestamp'] > $day_ago;
+        });
+        
+        // Adicionar nova métrica
+        $metrics[] = array(
+            'timestamp' => $timestamp,
+            'response_time' => $response_time,
+            'status' => is_wp_error($response) ? 'error' : wp_remote_retrieve_response_code($response),
+            'success' => !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200
+        );
+        
+        update_option('web2print_api_metrics', $metrics);
+    }
+    
+    /**
+     * Enviar alertas por email
+     */
+    private function send_api_alert($status, $details = '') {
+        if (!get_option('web2print_email_alerts', true)) {
+            return; // Alertas desabilitados
+        }
+        
+        $admin_email = get_option('web2print_alert_email', get_option('admin_email'));
+        $site_name = get_bloginfo('name');
+        
+        $status_messages = array(
+            'down' => '🚨 ALERTA CRÍTICO',
+            'slow' => '⚠️ ALERTA DE PERFORMANCE',
+            'recovered' => '✅ API RECUPERADA'
+        );
+        
+        $subject = sprintf('[%s] %s - Web2Print API', $site_name, $status_messages[$status] ?? 'ALERTA');
+        
+        $message = sprintf("
+        ALERTA DO SISTEMA WEB2PRINT
+        ===========================
+        
+        Site: %s
+        Status: %s
+        Horário: %s
+        Detalhes: %s
+        
+        AÇÕES RECOMENDADAS:
+        • Verificar status do Replit/servidor
+        • Checar logs da aplicação Flask
+        • Testar endpoint manualmente: %s
+        
+        Dashboard: %s
+        ",
+            $site_name,
+            $status,
+            current_time('Y-m-d H:i:s'),
+            $details,
+            $this->api_endpoint . '/health',
+            admin_url('admin.php?page=web2print-monitor')
+        );
+        
+        wp_mail($admin_email, $subject, $message);
+        
+        // Log do envio
+        error_log("[Web2Print Monitor] Email alert sent: {$status} - {$details}");
+    }
+    
+    /**
+     * Exibir notificações de status da API no painel
+     */
+    public function display_api_status_notices() {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        
+        $api_status = get_transient('web2print_api_status');
+        
+        if ($api_status === 'down') {
+            $error = get_transient('web2print_api_error');
+            echo '<div class="notice notice-error">';
+            echo '<p><strong>🚨 Web2Print API INDISPONÍVEL!</strong> ';
+            echo 'Os produtos de impressão estão temporariamente desabilitados. ';
+            echo '<br><strong>Erro:</strong> ' . esc_html($error) . ' ';
+            echo '<a href="' . admin_url('admin.php?page=web2print-monitor') . '">Ver Detalhes</a></p>';
+            echo '</div>';
+        }
+        
+        if ($api_status === 'slow') {
+            $response_time = get_transient('web2print_api_response_time');
+            echo '<div class="notice notice-warning">';
+            echo '<p><strong>⚠️ Web2Print API LENTA!</strong> ';
+            echo 'Tempos de resposta acima do normal (' . round($response_time) . 'ms). ';
+            echo 'Monitorando... <a href="' . admin_url('admin.php?page=web2print-monitor') . '">Ver Status</a></p>';
+            echo '</div>';
+        }
+    }
+    
+    /**
+     * Verificar API antes de adicionar ao carrinho (proteção contra R$ 0,00)
+     */
+    public function check_api_before_add_to_cart($passed, $product_id, $quantity) {
+        // Verificar se é produto Web2Print
+        $product = wc_get_product($product_id);
+        if (!$product || $product->get_meta('_enable_web2print') !== 'yes') {
+            return $passed; // Não é produto Web2Print
+        }
+        
+        $api_status = get_transient('web2print_api_status');
+        
+        if ($api_status === 'down') {
+            wc_add_notice('🚨 Serviço de impressão temporariamente indisponível. Tente novamente em alguns minutos.', 'error');
+            return false;
+        }
+        
+        if ($api_status === 'slow') {
+            wc_add_notice('⚠️ O serviço está mais lento que o normal. O cálculo pode demorar um pouco mais.', 'notice');
+        }
+        
+        return $passed;
+    }
+    
     /**
      * Download seguro de PDF com verificação de nonce e permissões
      */
@@ -974,6 +1255,192 @@ class Web2PrintIntegration {
         }
         
         wp_die(__('Nenhum arquivo disponível para download.', 'web2print-integration'), 404);
+    }
+    
+    /**
+     * Página de dashboard de monitoramento
+     */
+    public function monitor_dashboard_page() {
+        $api_status = get_transient('web2print_api_status');
+        $response_time = get_transient('web2print_api_response_time');
+        $last_check = get_transient('web2print_last_check');
+        $metrics = get_option('web2print_api_metrics', array());
+        
+        // Calcular estatísticas das últimas 24h
+        $uptime = $this->calculate_uptime($metrics);
+        $avg_response_time = $this->calculate_avg_response_time($metrics);
+        $failure_count = $this->count_failures($metrics);
+        
+        ?>
+        <div class="wrap">
+            <h1>🔍 <?php _e('Monitoramento Web2Print API', 'web2print-integration'); ?></h1>
+            
+            <div class="web2print-monitor-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">
+                <div class="web2print-status-card <?php echo $this->get_status_css_class($api_status); ?>" style="padding: 20px; border: 2px solid; border-radius: 8px;">
+                    <h3><?php _e('Status Atual', 'web2print-integration'); ?></h3>
+                    <div class="status-indicator" style="font-size: 24px; font-weight: bold;">
+                        <?php echo $this->get_status_display($api_status); ?>
+                    </div>
+                    <?php if ($response_time): ?>
+                        <p><?php _e('Tempo de resposta:', 'web2print-integration'); ?> <?php echo round($response_time); ?>ms</p>
+                    <?php endif; ?>
+                    <p><?php _e('Última verificação:', 'web2print-integration'); ?> <?php echo $last_check ? $last_check : __('Nunca', 'web2print-integration'); ?></p>
+                </div>
+                
+                <div class="web2print-metrics-card" style="padding: 20px; border: 1px solid #ddd; border-radius: 8px;">
+                    <h3><?php _e('Métricas (24h)', 'web2print-integration'); ?></h3>
+                    <ul style="list-style: none; padding: 0;">
+                        <li><strong><?php _e('Uptime:', 'web2print-integration'); ?></strong> <?php echo $uptime; ?>%</li>
+                        <li><strong><?php _e('Tempo médio:', 'web2print-integration'); ?></strong> <?php echo $avg_response_time; ?>ms</li>
+                        <li><strong><?php _e('Falhas:', 'web2print-integration'); ?></strong> <?php echo $failure_count; ?></li>
+                        <li><strong><?php _e('Total de checks:', 'web2print-integration'); ?></strong> <?php echo count($metrics); ?></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="web2print-actions" style="margin: 20px 0;">
+                <button onclick="testApiNow()" class="button button-primary">
+                    🔄 <?php _e('Testar API Agora', 'web2print-integration'); ?>
+                </button>
+                <a href="<?php echo admin_url('admin.php?page=web2print-settings'); ?>" class="button">
+                    ⚙️ <?php _e('Configurações', 'web2print-integration'); ?>
+                </a>
+            </div>
+            
+            <?php if (!empty($metrics)): ?>
+            <div class="web2print-history" style="margin: 20px 0;">
+                <h3><?php _e('Últimas Verificações', 'web2print-integration'); ?></h3>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th><?php _e('Horário', 'web2print-integration'); ?></th>
+                            <th><?php _e('Status', 'web2print-integration'); ?></th>
+                            <th><?php _e('Tempo de Resposta', 'web2print-integration'); ?></th>
+                            <th><?php _e('Sucesso', 'web2print-integration'); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach (array_slice(array_reverse($metrics), 0, 20) as $metric): ?>
+                        <tr>
+                            <td><?php echo date('Y-m-d H:i:s', $metric['timestamp']); ?></td>
+                            <td><?php echo $metric['status']; ?></td>
+                            <td><?php echo round($metric['response_time']); ?>ms</td>
+                            <td><?php echo $metric['success'] ? '✅' : '❌'; ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+        </div>
+        
+        <script>
+        function testApiNow() {
+            const button = event.target;
+            button.disabled = true;
+            button.textContent = '<?php _e('Testando...', 'web2print-integration'); ?>';
+            
+            fetch(ajaxurl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'action=web2print_test_api_now&nonce=<?php echo wp_create_nonce('web2print_test_api'); ?>'
+            })
+            .then(response => response.json())
+            .then(data => {
+                alert(data.message || '<?php _e('Teste concluído!', 'web2print-integration'); ?>');
+                location.reload();
+            })
+            .catch(error => {
+                alert('<?php _e('Erro no teste:', 'web2print-integration'); ?> ' + error);
+            })
+            .finally(() => {
+                button.disabled = false;
+                button.textContent = '🔄 <?php _e('Testar API Agora', 'web2print-integration'); ?>';
+            });
+        }
+        </script>
+        
+        <style>
+        .web2print-status-card.status-healthy {
+            border-color: #46b450;
+            background-color: #f7fcf0;
+        }
+        .web2print-status-card.status-slow {
+            border-color: #ffb900;
+            background-color: #fffbf0;
+        }
+        .web2print-status-card.status-down {
+            border-color: #dc3232;
+            background-color: #fef7f7;
+        }
+        </style>
+        <?php
+    }
+    
+    /**
+     * Obter classe CSS para status
+     */
+    private function get_status_css_class($status) {
+        $classes = array(
+            'healthy' => 'status-healthy',
+            'slow' => 'status-slow',
+            'down' => 'status-down'
+        );
+        return $classes[$status] ?? 'status-unknown';
+    }
+    
+    /**
+     * Obter exibição do status
+     */
+    private function get_status_display($status) {
+        $displays = array(
+            'healthy' => '✅ ' . __('Saudável', 'web2print-integration'),
+            'slow' => '⚠️ ' . __('Lento', 'web2print-integration'),
+            'down' => '❌ ' . __('Indisponível', 'web2print-integration')
+        );
+        return $displays[$status] ?? '❔ ' . __('Desconhecido', 'web2print-integration');
+    }
+    
+    /**
+     * Calcular uptime das últimas 24h
+     */
+    private function calculate_uptime($metrics) {
+        if (empty($metrics)) return 0;
+        
+        $successful = array_filter($metrics, function($metric) {
+            return $metric['success'];
+        });
+        
+        return round((count($successful) / count($metrics)) * 100, 1);
+    }
+    
+    /**
+     * Calcular tempo médio de resposta
+     */
+    private function calculate_avg_response_time($metrics) {
+        if (empty($metrics)) return 0;
+        
+        $successful = array_filter($metrics, function($metric) {
+            return $metric['success'];
+        });
+        
+        if (empty($successful)) return 0;
+        
+        $total_time = array_sum(array_column($successful, 'response_time'));
+        return round($total_time / count($successful));
+    }
+    
+    /**
+     * Contar falhas das últimas 24h
+     */
+    private function count_failures($metrics) {
+        if (empty($metrics)) return 0;
+        
+        return count(array_filter($metrics, function($metric) {
+            return !$metric['success'];
+        }));
     }
 }
 
