@@ -1,8 +1,11 @@
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session
 from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
+import fitz  # PyMuPDF para análise de cores
 import os
 import requests
+import uuid
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
@@ -26,8 +29,120 @@ class User(db.Model):
     cep = db.Column(db.String(10), nullable=False)
     uploaded_file = db.Column(db.String(200), nullable=True)
     num_pages = db.Column(db.Integer, nullable=True)
+    # Novos campos para análise de cores
+    color_type = db.Column(db.String(20), nullable=True)  # 'colorido', 'monocromatico', 'misto'
+    color_pages = db.Column(db.Integer, nullable=True)    # número de páginas coloridas
+    mono_pages = db.Column(db.Integer, nullable=True)     # número de páginas monocromáticas
+    estimated_cost = db.Column(db.Float, nullable=True)   # custo estimado
 
 db.create_all()
+
+def analyze_pdf_colors(file_path):
+    """Analisa cores em um PDF e retorna estatísticas"""
+    total_pages = 0  # Inicializar para evitar UnboundLocalError
+    try:
+        # Abrir o PDF com PyMuPDF
+        pdf_document = fitz.open(file_path)
+        
+        color_pages = 0
+        mono_pages = 0
+        total_pages = len(pdf_document)
+        
+        for page_num in range(total_pages):
+            page = pdf_document[page_num]
+            
+            # Verificar imagens na página
+            has_color = False
+            
+            # Verificar texto colorido
+            text_dict = page.get_text("dict")
+            for block in text_dict["blocks"]:
+                if "lines" in block:
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            # Verificar cor do texto (RGB)
+                            color = span.get("color", 0)
+                            if color != 0:  # 0 = preto, outros valores = colorido
+                                has_color = True
+                                break
+                        if has_color:
+                            break
+                    if has_color:
+                        break
+            
+            # Verificar imagens na página
+            if not has_color:
+                image_list = page.get_images()
+                for img_index, img in enumerate(image_list):
+                    try:
+                        # Extrair dados da imagem
+                        xref = img[0]
+                        base_image = pdf_document.extract_image(xref)
+                        
+                        # Verificar se é colorida baseado no espaço de cores
+                        colorspace = base_image.get("colorspace", 1)
+                        if colorspace == 3:  # RGB colorido
+                            has_color = True
+                            break
+                        elif colorspace == 4:  # CMYK colorido  
+                            has_color = True
+                            break
+                    except:
+                        # Se não conseguir analisar a imagem, assumir que pode ser colorida
+                        has_color = True
+                        break
+            
+            # Contar páginas
+            if has_color:
+                color_pages += 1
+            else:
+                mono_pages += 1
+        
+        pdf_document.close()
+        
+        # Determinar tipo geral
+        if color_pages == 0:
+            color_type = "monocromatico"
+        elif mono_pages == 0:
+            color_type = "colorido"
+        else:
+            color_type = "misto"
+        
+        return {
+            "color_type": color_type,
+            "color_pages": color_pages,
+            "mono_pages": mono_pages,
+            "total_pages": total_pages
+        }
+        
+    except Exception as e:
+        # Se falhar na análise, tentar obter total de páginas via PyPDF2 como fallback
+        try:
+            with open(file_path, 'rb') as f:
+                pdf_reader = PyPDF2.PdfReader(f)
+                total_pages = len(pdf_reader.pages)
+        except:
+            total_pages = 1  # Valor seguro se tudo falhar
+        
+        # Assumir monocromático como seguro
+        return {
+            "color_type": "monocromatico", 
+            "color_pages": 0,
+            "mono_pages": total_pages,
+            "total_pages": total_pages
+        }
+
+def calculate_estimated_cost(color_pages, mono_pages):
+    """Calcula custo estimado baseado na quantidade de páginas"""
+    # Preços exemplo (em reais)
+    PRICE_COLOR = 0.50    # R$ 0,50 por página colorida
+    PRICE_MONO = 0.10     # R$ 0,10 por página monocromática
+    
+    color_cost = color_pages * PRICE_COLOR
+    mono_cost = mono_pages * PRICE_MONO
+    total_cost = color_cost + mono_cost
+    
+    return round(total_cost, 2)
 
 @app.route('/')
 def index():
@@ -175,16 +290,40 @@ def upload():
             except Exception as e:
                 return jsonify({'error': 'Erro ao processar PDF. Verifique se o arquivo está válido.'}), 400
 
-            # Atualizar informações do usuário
-            user.uploaded_file = file.filename
+            # Gerar nome seguro para o arquivo
+            secure_name = secure_filename(file.filename)
+            if not secure_name:
+                secure_name = f"arquivo_{uuid.uuid4().hex}.pdf"
+            
+            # Garantir extensão .pdf
+            if not secure_name.lower().endswith('.pdf'):
+                secure_name = f"{secure_name}.pdf"
+            
+            # Salvar o arquivo primeiro para análise
+            file.stream.seek(0)  # Voltar ao início do stream
+            file_path = os.path.join('uploads', secure_name)
+            file.save(file_path)
+
+            # Analisar cores do PDF
+            color_stats = analyze_pdf_colors(file_path)
+            estimated_cost = calculate_estimated_cost(color_stats['color_pages'], color_stats['mono_pages'])
+
+            # Atualizar informações do usuário com dados de cor
+            user.uploaded_file = secure_name
             user.num_pages = num_pages
+            user.color_type = color_stats['color_type']
+            user.color_pages = color_stats['color_pages']
+            user.mono_pages = color_stats['mono_pages'] 
+            user.estimated_cost = estimated_cost
             db.session.commit()
 
-            # Salvar o arquivo final
-            file.stream.seek(0)  # Voltar ao início do stream
-            file.save(os.path.join('uploads', file.filename))
-
-            return jsonify({'pages': num_pages})
+            return jsonify({
+                'pages': num_pages,
+                'color_type': color_stats['color_type'],
+                'color_pages': color_stats['color_pages'],
+                'mono_pages': color_stats['mono_pages'],
+                'estimated_cost': estimated_cost
+            })
             
         except Exception as e:
             return jsonify({'error': f'Erro ao processar arquivo: {str(e)}'}), 500
@@ -197,8 +336,22 @@ def cart():
         return redirect(url_for('register'))
 
     user = User.query.filter_by(cpf=session['cpf']).first()
-    num_pages = user.num_pages if user else 0
-    return render_template('cart.html', num_pages=num_pages)
+    
+    if not user or not user.uploaded_file:
+        return render_template('cart.html', 
+                             error="Nenhum arquivo foi enviado ainda. Faça o upload primeiro.")
+    
+    # Preparar dados para o template
+    cart_data = {
+        'filename': user.uploaded_file,
+        'num_pages': user.num_pages or 0,
+        'color_type': user.color_type or 'monocromatico',
+        'color_pages': user.color_pages or 0,
+        'mono_pages': user.mono_pages or 0,
+        'estimated_cost': user.estimated_cost or 0.0
+    }
+    
+    return render_template('cart.html', **cart_data)
 
 if __name__ == '__main__':
     if not os.path.exists('uploads'):

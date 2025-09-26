@@ -5,14 +5,121 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Carrinho - Web2Print</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .stats-card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            background-color: #f9f9f9;
+        }
+        .color-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        .colorido { background-color: #ff6b6b; color: white; }
+        .monocromatico { background-color: #666; color: white; }
+        .misto { background-color: #4ecdc4; color: white; }
+        .cost-total {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-top: 15px;
+        }
+        .pricing-table {
+            margin: 15px 0;
+        }
+        .pricing-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .pricing-table th, .pricing-table td {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
-        <h1>Carrinho de Compras</h1>
-        <p>Número de páginas a serem impressas: <strong>{{ num_pages }}</strong></p>
-        <p>Preço por página: R$ 0.50</p>
-        <p>Total: R$ {{ num_pages * 0.50 }}</p>
-        <a href="/">Fazer novo upload</a>
+        <h1>🛒 Carrinho de Compras</h1>
+        
+        {% if error %}
+            <div class="error">{{ error }}</div>
+            <p><a href="{{ url_for('upload') }}">Fazer upload de arquivo</a></p>
+        {% else %}
+            <div class="stats-card">
+                <h2>📄 Informações do Arquivo</h2>
+                <p><strong>Arquivo:</strong> {{ filename }}</p>
+                <p><strong>Total de páginas:</strong> {{ num_pages }}</p>
+                
+                <h3>🎨 Análise de Cores</h3>
+                <span class="color-badge {{ color_type }}">
+                    {% if color_type == 'colorido' %}
+                        🌈 Documento Colorido
+                    {% elif color_type == 'monocromatico' %}
+                        ⚫ Documento Monocromático
+                    {% else %}
+                        🔄 Documento Misto
+                    {% endif %}
+                </span>
+                
+                <div class="pricing-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tipo</th>
+                                <th>Páginas</th>
+                                <th>Preço Unitário</th>
+                                <th>Subtotal</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if color_pages > 0 %}
+                            <tr>
+                                <td>🌈 Páginas Coloridas</td>
+                                <td>{{ color_pages }}</td>
+                                <td>R$ 0,50</td>
+                                <td>R$ {{ "%.2f"|format(color_pages * 0.50) }}</td>
+                            </tr>
+                            {% endif %}
+                            {% if mono_pages > 0 %}
+                            <tr>
+                                <td>⚫ Páginas Monocromáticas</td>
+                                <td>{{ mono_pages }}</td>
+                                <td>R$ 0,10</td>
+                                <td>R$ {{ "%.2f"|format(mono_pages * 0.10) }}</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="cost-total">
+                    💰 Total Estimado: R$ {{ "%.2f"|format(estimated_cost) }}
+                </div>
+                
+                <h3>📋 Recomendações</h3>
+                {% if color_type == 'colorido' %}
+                    <p>✅ Recomendamos impressão colorida de alta qualidade</p>
+                    <p>💡 Considere papel fotográfico para melhor resultado</p>
+                {% elif color_type == 'monocromatico' %}
+                    <p>✅ Impressão monocromática é ideal para este documento</p>
+                    <p>💡 Papel sulfite comum oferece ótimo custo-benefício</p>
+                {% else %}
+                    <p>✅ Documento misto - algumas páginas em cor, outras em P&B</p>
+                    <p>💡 Considere imprimir apenas páginas coloridas em cor</p>
+                {% endif %}
+            </div>
+            
+            <div style="margin-top: 30px;">
+                <a href="{{ url_for('upload') }}" style="margin-right: 15px;">📤 Fazer novo upload</a>
+                <a href="{{ url_for('index') }}">🏠 Voltar ao início</a>
+            </div>
+        {% endif %}
     </div>
 </body>
 </html>
