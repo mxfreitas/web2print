@@ -34,6 +34,16 @@ class User(db.Model):
     color_pages = db.Column(db.Integer, nullable=True)    # número de páginas coloridas
     mono_pages = db.Column(db.Integer, nullable=True)     # número de páginas monocromáticas
     estimated_cost = db.Column(db.Float, nullable=True)   # custo estimado
+    
+    # Novos campos para configuração avançada de pedidos
+    print_type = db.Column(db.String(20), nullable=True)      # 'color', 'mono', 'mixed'
+    paper_type = db.Column(db.String(50), nullable=True)      # 'sulfite', 'couche', 'reciclado'
+    paper_weight = db.Column(db.Integer, nullable=True)       # gramatura: 75, 90, 120, etc
+    binding_type = db.Column(db.String(50), nullable=True)    # 'spiral', 'wire-o', 'capa-dura', 'grampo'
+    finishing = db.Column(db.String(100), nullable=True)      # 'laminacao', 'verniz', 'dobra', etc
+    copy_quantity = db.Column(db.Integer, nullable=True)      # quantidade de cópias
+    total_cost = db.Column(db.Float, nullable=True)           # custo total final
+    order_configured = db.Column(db.Boolean, default=False)   # se o pedido foi configurado
 
 db.create_all()
 
@@ -137,8 +147,8 @@ def analyze_pdf_colors(file_path):
         }
 
 def calculate_estimated_cost(color_pages, mono_pages):
-    """Calcula custo estimado baseado na quantidade de páginas"""
-    # Preços exemplo (em reais)
+    """Calcula custo estimado baseado na quantidade de páginas (básico)"""
+    # Preços básicos exemplo (em reais)
     PRICE_COLOR = 0.50    # R$ 0,50 por página colorida
     PRICE_MONO = 0.10     # R$ 0,10 por página monocromática
     
@@ -147,6 +157,84 @@ def calculate_estimated_cost(color_pages, mono_pages):
     total_cost = color_cost + mono_cost
     
     return round(total_cost, 2)
+
+# Tabelas de preços para configuração avançada
+PAPER_PRICES = {
+    'sulfite': {
+        75: {'color': 0.45, 'mono': 0.08},
+        90: {'color': 0.50, 'mono': 0.10}, 
+        120: {'color': 0.65, 'mono': 0.15}
+    },
+    'couche': {
+        90: {'color': 0.70, 'mono': 0.20},
+        115: {'color': 0.85, 'mono': 0.25},
+        150: {'color': 1.10, 'mono': 0.35}
+    },
+    'reciclado': {
+        75: {'color': 0.40, 'mono': 0.07},
+        90: {'color': 0.45, 'mono': 0.08}
+    }
+}
+
+BINDING_PRICES = {
+    'grampo': 2.00,
+    'spiral': 5.00,
+    'wire-o': 8.00,
+    'capa-dura': 25.00
+}
+
+FINISHING_PRICES = {
+    'laminacao': 3.00,
+    'verniz': 2.50,
+    'dobra': 1.50,
+    'perfuracao': 1.00
+}
+
+def calculate_advanced_cost(color_pages, mono_pages, paper_type='sulfite', 
+                          paper_weight=90, binding_type='grampo', 
+                          finishing=None, copy_quantity=1):
+    """Calcula custo avançado baseado em todas as configurações"""
+    
+    # Validar se o tipo de papel e gramatura existem
+    if paper_type not in PAPER_PRICES:
+        paper_type = 'sulfite'
+    
+    if paper_weight not in PAPER_PRICES[paper_type]:
+        # Usar gramatura mais próxima disponível
+        available_weights = list(PAPER_PRICES[paper_type].keys())
+        paper_weight = min(available_weights, key=lambda x: abs(x - paper_weight))
+    
+    # Preços por página baseados no papel
+    page_prices = PAPER_PRICES[paper_type][paper_weight]
+    
+    # Calcular custo das páginas
+    pages_cost = (color_pages * page_prices['color']) + (mono_pages * page_prices['mono'])
+    
+    # Adicionar custo de encadernação
+    binding_cost = BINDING_PRICES.get(binding_type, 0)
+    
+    # Adicionar custo de acabamento
+    finishing_cost = 0
+    if finishing:
+        finishing_options = finishing.split(',')
+        for option in finishing_options:
+            option = option.strip()
+            finishing_cost += FINISHING_PRICES.get(option, 0)
+    
+    # Custo por exemplar
+    cost_per_copy = pages_cost + binding_cost + finishing_cost
+    
+    # Custo total considerando quantidade
+    total_cost = cost_per_copy * copy_quantity
+    
+    return {
+        'pages_cost': round(pages_cost, 2),
+        'binding_cost': round(binding_cost, 2),
+        'finishing_cost': round(finishing_cost, 2),
+        'cost_per_copy': round(cost_per_copy, 2),
+        'total_cost': round(total_cost, 2),
+        'copy_quantity': copy_quantity
+    }
 
 @app.route('/')
 def index():
