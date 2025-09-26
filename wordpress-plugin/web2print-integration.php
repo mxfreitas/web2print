@@ -383,11 +383,26 @@ class Web2PrintIntegration {
             WC()->cart->cart_contents[$cart_item_key]['web2print_data'] = array(
                 'calculation' => $calculation,
                 'config' => $config,
+                // DADOS COMPLETOS DO PDF PARA GRÁFICA
                 'pdf_file_url' => $pdf_analysis['file_url'], // CRÍTICO: URL do arquivo para gráfica
+                'pdf_file_path' => $pdf_analysis['file_path'] ?? '', // Caminho local como fallback
                 'pdf_filename' => $pdf_analysis['filename'],
                 'pdf_filesize' => $pdf_analysis['filesize'],
-                'timestamp' => current_time('mysql')
+                'content_hash' => $pdf_analysis['content_hash'] ?? '',
+                'verification_token' => $pdf_analysis['verification_token'] ?? '',
+                'analysis_method' => $pdf_analysis['analysis_method'] ?? 'unknown',
+                'verified' => $pdf_analysis['verified'] ?? false,
+                'timestamp' => current_time('mysql'),
+                'upload_timestamp' => $pdf_analysis['timestamp'] ?? time()
             );
+            
+            // Log da passagem de dados para carrinho
+            error_log(sprintf(
+                'Web2Print: Dados PDF salvos no carrinho. URL: %s, Hash: %s, Token: %s',
+                $pdf_analysis['file_url'] ?? 'N/A',
+                substr($pdf_analysis['content_hash'] ?? '', 0, 8),
+                substr($pdf_analysis['verification_token'] ?? '', 0, 8)
+            ));
             
             // Limpar dados da sessão
             WC()->session->__unset('web2print_calculation');
@@ -470,16 +485,76 @@ class Web2PrintIntegration {
         if (isset($values['web2print_data'])) {
             $data = $values['web2print_data'];
             
+            // Log início do processo
+            error_log(sprintf(
+                'Web2Print: Salvando metadados do pedido #%d, item #%d',
+                $order->get_id(),
+                $item->get_id()
+            ));
+            
             // Salvar dados essenciais como meta do item do pedido
             $item->add_meta_data('_web2print_config', $data['config']);
             $item->add_meta_data('_web2print_calculation', $data['calculation']);
             $item->add_meta_data('_web2print_timestamp', $data['timestamp']);
             
-            // CRÍTICO: Salvar informações do arquivo para acesso da gráfica
-            if (isset($data['pdf_file_url'])) {
-                $item->add_meta_data('_web2print_pdf_url', $data['pdf_file_url']);
-                $item->add_meta_data('_web2print_pdf_filename', $data['pdf_filename']);
-                $item->add_meta_data('_web2print_pdf_filesize', $data['pdf_filesize']);
+            // CRÍTICO: Validação e salvamento robusta do URL do PDF
+            if (isset($data['pdf_file_url']) && !empty($data['pdf_file_url'])) {
+                $pdf_url = $data['pdf_file_url'];
+                
+                // 1. VALIDAÇÃO DO URL
+                if (filter_var($pdf_url, FILTER_VALIDATE_URL)) {
+                    // Verificar se URL é acessível
+                    $response = wp_remote_head($pdf_url, array('timeout' => 10));
+                    $is_accessible = !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200;
+                    
+                    // Salvar URL validado e status de verificação
+                    $item->add_meta_data('_web2print_pdf_url', $pdf_url);
+                    $item->add_meta_data('_web2print_pdf_url_verified', $is_accessible ? 'yes' : 'no');
+                    $item->add_meta_data('_web2print_pdf_url_checked_at', current_time('mysql'));
+                    
+                    // 2. DADOS ESSENCIAIS PARA GRÁFICA
+                    $item->add_meta_data('_web2print_pdf_filename', $data['pdf_filename'] ?? '');
+                    $item->add_meta_data('_web2print_pdf_filesize', $data['pdf_filesize'] ?? 0);
+                    
+                    // 3. METADADOS DE VERIFICAÇÃO E FALLBACK
+                    if (isset($data['pdf_file_path'])) {
+                        $item->add_meta_data('_web2print_pdf_local_path', $data['pdf_file_path']);
+                    }
+                    
+                    if (isset($data['content_hash'])) {
+                        $item->add_meta_data('_web2print_pdf_hash', $data['content_hash']);
+                    }
+                    
+                    if (isset($data['verification_token'])) {
+                        $item->add_meta_data('_web2print_verification_token', $data['verification_token']);
+                    }
+                    
+                    // 4. METADADOS TÉCNICOS
+                    $item->add_meta_data('_web2print_analysis_method', $data['analysis_method'] ?? 'unknown');
+                    $item->add_meta_data('_web2print_upload_timestamp', $data['upload_timestamp'] ?? '');
+                    $item->add_meta_data('_web2print_verified', $data['verified'] ?? false ? 'yes' : 'no');
+                    
+                    // Log detalhado do salvamento
+                    error_log(sprintf(
+                        'Web2Print: URL PDF salvo no pedido #%d: %s (Acessível: %s, Hash: %s)',
+                        $order->get_id(),
+                        $pdf_url,
+                        $is_accessible ? 'SIM' : 'NÃO',
+                        substr($data['content_hash'] ?? '', 0, 8)
+                    ));
+                    
+                } else {
+                    // URL inválido - log de erro
+                    error_log(sprintf(
+                        'Web2Print: URL inválido no pedido #%d: %s',
+                        $order->get_id(),
+                        $pdf_url
+                    ));
+                    
+                    // Salvar URL mesmo sendo inválido para debugging
+                    $item->add_meta_data('_web2print_pdf_url', $pdf_url);
+                    $item->add_meta_data('_web2print_pdf_url_verified', 'invalid');
+                }
             }
             
             // Salvar dados legíveis para o admin (com escape)
@@ -500,16 +575,41 @@ class Web2PrintIntegration {
             $item->add_meta_data(__('Cópias', 'web2print-integration'), $data['config']['copy_quantity']);
             $item->add_meta_data(__('Custo por Cópia', 'web2print-integration'), 'R$ ' . number_format($data['calculation']['cost_details']['cost_per_copy'], 2, ',', '.'));
             
-            // CRÍTICO: Link do arquivo para download da gráfica
-            if (isset($data['pdf_file_url'])) {
+            // CRÍTICO: Link do arquivo para download da gráfica (com validação)
+            if (isset($data['pdf_file_url']) && !empty($data['pdf_file_url'])) {
                 $file_link = sprintf(
                     '<a href="%s" target="_blank" rel="noopener">📥 %s (%s)</a>',
                     esc_url($data['pdf_file_url']),
-                    esc_html($data['pdf_filename']),
-                    size_format($data['pdf_filesize'])
+                    esc_html($data['pdf_filename'] ?? 'arquivo.pdf'),
+                    size_format($data['pdf_filesize'] ?? 0)
                 );
                 $item->add_meta_data(__('📁 Arquivo para Impressão', 'web2print-integration'), $file_link, true);
+                
+                // URL formatado para fácil acesso da gráfica
+                $item->add_meta_data(__('🔗 URL do Arquivo', 'web2print-integration'), esc_url($data['pdf_file_url']), true);
             }
+            
+            // 5. HOOK DE INTEGRAÇÃO PARA SISTEMAS EXTERNOS
+            $pdf_data = array(
+                'order_id' => $order->get_id(),
+                'item_id' => $item->get_id(),
+                'pdf_url' => $data['pdf_file_url'] ?? '',
+                'pdf_filename' => $data['pdf_filename'] ?? '',
+                'pdf_hash' => $data['content_hash'] ?? '',
+                'verification_token' => $data['verification_token'] ?? '',
+                'analysis_method' => $data['analysis_method'] ?? '',
+                'is_verified' => $data['verified'] ?? false
+            );
+            
+            // Disparar ação para integrações externas (gráficas, ERP, etc.)
+            do_action('web2print_order_item_saved', $pdf_data, $data);
+            
+            // Log final de sucesso
+            error_log(sprintf(
+                'Web2Print: Metadados salvos com sucesso no pedido #%d, item #%d. Hook disparado.',
+                $order->get_id(),
+                $item->get_id()
+            ));
         }
     }
     
