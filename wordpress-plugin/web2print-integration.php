@@ -47,6 +47,11 @@ class Web2PrintIntegration {
         
         // Hook para adicionar campos personalizados no produto
         add_action('woocommerce_single_product_summary', array($this, 'add_print_calculator'), 25);
+        
+        // DISPLAY NO PAINEL ADMINISTRATIVO PARA PRODUÇÃO
+        add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
+        add_action('woocommerce_admin_order_item_values', array($this, 'display_web2print_order_details'), 10, 3);
+        add_action('wp_ajax_web2print_download_pdf', array($this, 'secure_pdf_download'));
     }
     
     public function init() {
@@ -704,6 +709,255 @@ class Web2PrintIntegration {
             </form>
         </div>
         <?php
+    }
+    
+    /**
+     * Enqueue CSS e JS para área administrativa
+     */
+    public function admin_enqueue_scripts($hook) {
+        // Verificar se estamos na tela de pedidos do WooCommerce
+        if ($hook === 'post.php' || $hook === 'edit.php') {
+            global $post_type;
+            if ($post_type === 'shop_order') {
+                wp_enqueue_style(
+                    'web2print-admin-styles',
+                    WEB2PRINT_PLUGIN_URL . 'css/web2print-admin.css',
+                    array(),
+                    WEB2PRINT_VERSION
+                );
+            }
+        }
+    }
+    
+    /**
+     * Display destacado dos dados Web2Print no painel administrativo
+     */
+    public function display_web2print_order_details($product, $item, $item_id) {
+        // Verificar se este item tem dados Web2Print
+        $config = $item->get_meta('_web2print_config');
+        $calculation = $item->get_meta('_web2print_calculation');
+        $pdf_url = $item->get_meta('_web2print_pdf_url');
+        $pdf_filename = $item->get_meta('_web2print_pdf_filename');
+        $pdf_filesize = $item->get_meta('_web2print_pdf_filesize');
+        $pdf_verified = $item->get_meta('_web2print_pdf_url_verified');
+        
+        if (!$config || !$calculation || !$pdf_url) {
+            return; // Não é um item Web2Print
+        }
+        
+        // Preparar dados para exibição
+        $breakdown = $calculation['breakdown'] ?? array();
+        $total_pages = $breakdown['total_pages'] ?? 0;
+        $color_pages = $breakdown['color_pages'] ?? 0;
+        $mono_pages = $breakdown['mono_pages'] ?? 0;
+        $paper_info = $breakdown['paper_info'] ?? '';
+        $binding_info = $breakdown['binding_info'] ?? '';
+        $finishing_info = $breakdown['finishing_info'] ?? '';
+        $copy_quantity = $config['copy_quantity'] ?? 1;
+        
+        // Preparar link de download seguro
+        $download_nonce = wp_create_nonce('web2print_download_' . $item_id);
+        $download_url = add_query_arg(array(
+            'action' => 'web2print_download_pdf',
+            'item_id' => $item_id,
+            'nonce' => $download_nonce
+        ), admin_url('admin-ajax.php'));
+        
+        // Formatar tamanho do arquivo
+        $file_size_formatted = '';
+        if ($pdf_filesize) {
+            $file_size_formatted = ' (' . size_format($pdf_filesize) . ')';
+        }
+        
+        // Status de verificação
+        $verified_status = ($pdf_verified === 'yes') ? 
+            '<span class="web2print-verified">✅ Verificado</span>' : 
+            '<span class="web2print-unverified">⚠️ Não verificado</span>';
+        
+        ?>
+        <div class="web2print-production-info">
+            <h4>📄 DADOS PARA PRODUÇÃO</h4>
+            
+            <div class="web2print-download-section">
+                <strong>🔗 Download PDF:</strong>
+                <a href="<?php echo esc_url($download_url); ?>" 
+                   class="web2print-download-link" 
+                   target="_blank">
+                    📥 <?php echo esc_html($pdf_filename); ?><?php echo esc_html($file_size_formatted); ?>
+                </a>
+                <?php echo $verified_status; ?>
+            </div>
+            
+            <div class="web2print-analysis-section">
+                <h5>📊 ANÁLISE DO ARQUIVO:</h5>
+                <ul class="web2print-page-info">
+                    <li><strong>Páginas Totais:</strong> <?php echo intval($total_pages); ?></li>
+                    <li><strong>Páginas a Cores:</strong> <?php echo intval($color_pages); ?></li>
+                    <li><strong>Páginas Preto & Branco:</strong> <?php echo intval($mono_pages); ?></li>
+                </ul>
+            </div>
+            
+            <div class="web2print-specs-section">
+                <h5>⚙️ ESPECIFICAÇÕES:</h5>
+                <ul class="web2print-specs-list">
+                    <?php if ($paper_info): ?>
+                        <li><strong>Papel:</strong> <?php echo esc_html($paper_info); ?></li>
+                    <?php endif; ?>
+                    
+                    <?php if ($binding_info): ?>
+                        <li><strong>Acabamento:</strong> <?php echo esc_html($binding_info); ?></li>
+                    <?php endif; ?>
+                    
+                    <?php if ($finishing_info): ?>
+                        <li><strong>Acabamentos Extras:</strong> <?php echo esc_html($finishing_info); ?></li>
+                    <?php endif; ?>
+                    
+                    <li><strong>Cópias:</strong> <?php echo intval($copy_quantity); ?></li>
+                </ul>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Download seguro de PDF com verificação de nonce e permissões
+     */
+    public function secure_pdf_download() {
+        // Verificar permissão básica para editar pedidos
+        if (!current_user_can('edit_shop_orders')) {
+            wp_die(__('Você não tem permissão para acessar este arquivo.', 'web2print-integration'), 403);
+        }
+        
+        $item_id = intval($_GET['item_id'] ?? 0);
+        $nonce = sanitize_text_field($_GET['nonce'] ?? '');
+        
+        // Validar item_id
+        if (!$item_id || $item_id <= 0) {
+            wp_die(__('ID do item inválido.', 'web2print-integration'), 400);
+        }
+        
+        // Verificar nonce específico para este item
+        if (!wp_verify_nonce($nonce, 'web2print_download_' . $item_id)) {
+            wp_die(__('Link de download inválido ou expirado.', 'web2print-integration'), 403);
+        }
+        
+        // Buscar item do pedido usando função segura do WooCommerce
+        $order_item = WC_Order_Factory::get_order_item($item_id);
+        if (!$order_item || !is_a($order_item, 'WC_Order_Item_Product')) {
+            wp_die(__('Item do pedido não encontrado.', 'web2print-integration'), 404);
+        }
+        
+        // Verificar se usuário tem acesso ao pedido específico
+        $order_id = $order_item->get_order_id();
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            wp_die(__('Pedido não encontrado.', 'web2print-integration'), 404);
+        }
+        
+        // Verificar permissão específica para este pedido
+        if (!current_user_can('edit_shop_order', $order_id)) {
+            wp_die(__('Você não tem permissão para acessar este pedido.', 'web2print-integration'), 403);
+        }
+        
+        // Extrair dados do PDF
+        $pdf_url = $order_item->get_meta('_web2print_pdf_url');
+        $pdf_filename = $order_item->get_meta('_web2print_pdf_filename');
+        $pdf_local_path = $order_item->get_meta('_web2print_pdf_local_path');
+        
+        if (!$pdf_url && !$pdf_local_path) {
+            wp_die(__('Arquivo PDF não encontrado.', 'web2print-integration'), 404);
+        }
+        
+        // SEGURANÇA: Validação rigorosa do diretório de uploads
+        $upload_dir = wp_upload_dir();
+        $uploads_base = realpath($upload_dir['basedir']);
+        $uploads_url = $upload_dir['baseurl'];
+        
+        if (!$uploads_base) {
+            error_log('Web2Print Security: Diretório de uploads não encontrado');
+            wp_die(__('Erro interno do servidor.', 'web2print-integration'), 500);
+        }
+        
+        // PRIORIDADE: Servir arquivo local (mais seguro)
+        if ($pdf_local_path) {
+            // Validação rigorosa do caminho local
+            $real_path = realpath($pdf_local_path);
+            
+            // Verificar se arquivo existe e está dentro dos uploads
+            if (!$real_path || !file_exists($real_path)) {
+                wp_die(__('Arquivo não encontrado no servidor.', 'web2print-integration'), 404);
+            }
+            
+            // CRÍTICO: Verificar se arquivo está dentro do diretório de uploads
+            if (strpos($real_path, $uploads_base . DIRECTORY_SEPARATOR) !== 0) {
+                error_log(sprintf('Web2Print Security: Tentativa de acesso fora de uploads. Path: %s, Uploads: %s', $real_path, $uploads_base));
+                wp_die(__('Acesso ao arquivo não permitido.', 'web2print-integration'), 403);
+            }
+            
+            // Verificar se é realmente um PDF
+            $file_type = mime_content_type($real_path);
+            if ($file_type !== 'application/pdf') {
+                error_log(sprintf('Web2Print Security: Arquivo não é PDF. Type: %s', $file_type));
+                wp_die(__('Tipo de arquivo não permitido.', 'web2print-integration'), 403);
+            }
+            
+            // Desativar output buffering para download limpo
+            if (ob_get_level()) {
+                ob_end_clean();
+            }
+            
+            // Headers seguros para download
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . sanitize_file_name($pdf_filename) . '"');
+            header('Content-Length: ' . filesize($real_path));
+            header('Cache-Control: private, no-cache, no-store, must-revalidate');
+            header('Pragma: no-cache');
+            header('Expires: 0');
+            
+            // Log do acesso para auditoria
+            error_log(sprintf(
+                'Web2Print: Download seguro via arquivo local. Item ID: %d, User: %s, File: %s',
+                $item_id,
+                wp_get_current_user()->user_login,
+                basename($real_path)
+            ));
+            
+            readfile($real_path);
+            exit;
+        }
+        
+        // FALLBACK: URL validada (apenas se local não disponível)
+        if ($pdf_url) {
+            // Verificar se URL é válida
+            if (!filter_var($pdf_url, FILTER_VALIDATE_URL)) {
+                wp_die(__('URL do arquivo inválida.', 'web2print-integration'), 400);
+            }
+            
+            // CRÍTICO: Verificar se URL pertence ao domínio de uploads
+            $parsed_url = parse_url($pdf_url);
+            $parsed_uploads = parse_url($uploads_url);
+            
+            // Verificar mesmo host e path prefix
+            if ($parsed_url['host'] !== $parsed_uploads['host'] || 
+                strpos($parsed_url['path'], $parsed_uploads['path']) !== 0) {
+                error_log(sprintf('Web2Print Security: URL fora dos uploads. URL: %s, Uploads: %s', $pdf_url, $uploads_url));
+                wp_die(__('Acesso ao arquivo não permitido.', 'web2print-integration'), 403);
+            }
+            
+            // Log do acesso para auditoria
+            error_log(sprintf(
+                'Web2Print: Download seguro via URL. Item ID: %d, User: %s, URL: %s',
+                $item_id,
+                wp_get_current_user()->user_login,
+                $pdf_url
+            ));
+            
+            // Redirect seguro para URL validada
+            wp_redirect($pdf_url);
+            exit;
+        }
+        
+        wp_die(__('Nenhum arquivo disponível para download.', 'web2print-integration'), 404);
     }
 }
 

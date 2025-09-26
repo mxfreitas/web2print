@@ -1,0 +1,192 @@
+/* CSS para exibição dos dados Web2Print no painel administrativo */
+
+.web2print-production-info {
+    background: #f8f9fa;
+    border: 2px solid #28a745;
+    border-radius: 8px;
+    padding: 15px;
+    margin: 10px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.web2print-production-info h4 {
+    color: #155724;
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    font-weight: bold;
+    border-bottom: 2px solid #28a745;
+    padding-bottom: 5px;
+}
+
+.web2print-production-info h5 {
+    color: #495057;
+    margin: 15px 0 10px 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.web2print-download-section {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 15px;
+}
+
+.web2print-download-link {
+    font-size: 16px;
+    font-weight: bold;
+    color: #007cba !important;
+    text-decoration: none;
+    padding: 8px 12px;
+    background: #e7f3ff;
+    border: 1px solid #007cba;
+    border-radius: 4px;
+    display: inline-block;
+    margin: 5px 0;
+    transition: all 0.3s ease;
+}
+
+.web2print-download-link:hover {
+    background: #007cba;
+    color: #fff !important;
+    text-decoration: none;
+}
+
+.web2print-verified {
+    color: #155724;
+    background: #d4edda;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 10px;
+}
+
+.web2print-unverified {
+    color: #856404;
+    background: #fff3cd;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 10px;
+}
+
+.web2print-analysis-section,
+.web2print-specs-section {
+    background: #fff;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+
+.web2print-page-info,
+.web2print-specs-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.web2print-page-info li,
+.web2print-specs-list li {
+    padding: 5px 0;
+    border-bottom: 1px solid #f1f3f4;
+    font-size: 14px;
+}
+
+.web2print-page-info li:last-child,
+.web2print-specs-list li:last-child {
+    border-bottom: none;
+}
+
+.web2print-page-info strong,
+.web2print-specs-list strong {
+    color: #495057;
+    min-width: 120px;
+    display: inline-block;
+}
+
+/* Responsividade para dispositivos móveis */
+@media (max-width: 768px) {
+    .web2print-production-info {
+        padding: 10px;
+        margin: 5px 0;
+    }
+    
+    .web2print-download-link {
+        font-size: 14px;
+        padding: 6px 10px;
+        display: block;
+        text-align: center;
+        margin: 8px 0;
+    }
+    
+    .web2print-verified,
+    .web2print-unverified {
+        display: block;
+        margin: 5px 0;
+        text-align: center;
+    }
+    
+    .web2print-page-info strong,
+    .web2print-specs-list strong {
+        display: block;
+        margin-bottom: 2px;
+    }
+}
+
+/* Destaque especial para informações críticas */
+.web2print-page-info li:first-child {
+    background: #fff3cd;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.web2print-specs-list li:last-child {
+    background: #f8d7da;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    margin-top: 5px;
+}
+
+/* Animação para destaque */
+.web2print-production-info {
+    animation: web2print-highlight 0.5s ease-in-out;
+}
+
+@keyframes web2print-highlight {
+    0% {
+        transform: scale(0.98);
+        opacity: 0.8;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* Melhorias de acessibilidade */
+.web2print-download-link:focus {
+    outline: 2px solid #007cba;
+    outline-offset: 2px;
+}
+
+/* Print styles */
+@media print {
+    .web2print-production-info {
+        border: 2px solid #000 !important;
+        background: #fff !important;
+        break-inside: avoid;
+    }
+    
+    .web2print-download-link {
+        color: #000 !important;
+        background: #fff !important;
+        border: 1px solid #000 !important;
+    }
+}
