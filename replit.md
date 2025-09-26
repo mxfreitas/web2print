@@ -141,3 +141,26 @@ Preferred communication style: Simple, everyday language.
   - **Traceability**: Complete audit trail from upload through order completion
   - **Integration Ready**: Designed for seamless connection with external printing workflow systems
   - **Security Compliant**: Sensitive data protection while maintaining operational transparency
+
+## September 26, 2025 - Robust PDF File Validation System
+- **Multi-Layer Validation**: Comprehensive PDF file validation preventing invalid uploads before Flask processing
+  - **Client-side JavaScript**: Extension (.pdf), MIME type (application/pdf), file size (1KB-50MB) validation
+  - **Server-side WordPress**: Magic bytes check (%PDF), wp_check_filetype_and_ext, file integrity validation
+  - **HTML Template**: Enhanced accept attribute (.pdf,application/pdf) for better browser filtering
+- **Consistent Error Messaging**: Unified user experience with clear, specific error messages
+  - **Standard Message**: "Formato inválido. Apenas PDFs são aceitos." for format errors
+  - **Size Validation**: "Arquivo muito grande. Máximo 50MB." for oversized files
+  - **Server Integration**: Error messages from WordPress server displayed in JavaScript UI
+- **Enhanced Error Handling**: Improved AJAX error processing with server message parsing
+  - **Response Parsing**: Intelligent parsing of server JSON responses for specific error messages
+  - **Fallback Messaging**: Graceful fallback to localized error texts when parsing fails
+  - **User Experience**: Clear feedback for all upload and validation scenarios
+- **Security Features**: Multi-level protection against invalid file uploads
+  - **Magic Bytes Verification**: Server-side check for PDF signature (%PDF) to prevent spoofed files
+  - **File Integrity Check**: Basic file opening and reading validation to detect corruption
+  - **Consistent Limits**: 50MB maximum size limit aligned between client and server validation
+- **System Benefits**:
+  - **User Experience**: Immediate feedback prevents unnecessary server requests for invalid files
+  - **Performance**: Client-side validation reduces server load and improves response times
+  - **Security**: Multiple validation layers prevent malicious or corrupted file uploads
+  - **Reliability**: Consistent validation ensures only valid PDFs reach Flask analysis system
