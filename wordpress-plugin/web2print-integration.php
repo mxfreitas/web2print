@@ -58,6 +58,11 @@ class Web2PrintIntegration {
         add_action('web2print_monitor_api', array($this, 'monitor_api_health'));
         add_action('admin_notices', array($this, 'display_api_status_notices'));
         add_filter('woocommerce_add_to_cart_validation', array($this, 'check_api_before_add_to_cart'), 5, 3);
+        
+        // AJAX para testes e gerenciamento
+        add_action('wp_ajax_web2print_test_api_now', array($this, 'ajax_test_api_now'));
+        add_action('wp_ajax_web2print_clear_metrics', array($this, 'ajax_clear_metrics'));
+        add_action('wp_ajax_web2print_send_test_alert', array($this, 'ajax_send_test_alert'));
     }
     
     public function init() {
@@ -1441,6 +1446,77 @@ class Web2PrintIntegration {
         return count(array_filter($metrics, function($metric) {
             return !$metric['success'];
         }));
+    }
+    
+    /**
+     * AJAX: Testar API manualmente
+     */
+    public function ajax_test_api_now() {
+        // Verificar nonce
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'web2print_test_api')) {
+            wp_die(__('Acesso negado.', 'web2print-integration'), 403);
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Permissão insuficiente.', 'web2print-integration'), 403);
+        }
+        
+        // Forçar execução do monitoramento
+        $this->monitor_api_health();
+        
+        $status = get_transient('web2print_api_status');
+        $response_time = get_transient('web2print_api_response_time');
+        
+        wp_send_json_success(array(
+            'message' => sprintf(
+                __('Teste concluído! Status: %s (%sms)', 'web2print-integration'),
+                $status ?: 'desconhecido',
+                $response_time ? round($response_time) : '?'
+            ),
+            'status' => $status,
+            'response_time' => $response_time
+        ));
+    }
+    
+    /**
+     * AJAX: Limpar métricas
+     */
+    public function ajax_clear_metrics() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'web2print_clear_metrics')) {
+            wp_die(__('Acesso negado.', 'web2print-integration'), 403);
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Permissão insuficiente.', 'web2print-integration'), 403);
+        }
+        
+        delete_option('web2print_api_metrics');
+        delete_transient('web2print_api_status');
+        delete_transient('web2print_api_response_time');
+        delete_transient('web2print_last_check');
+        
+        wp_send_json_success(array(
+            'message' => __('Histórico limpo com sucesso!', 'web2print-integration')
+        ));
+    }
+    
+    /**
+     * AJAX: Enviar alerta de teste
+     */
+    public function ajax_send_test_alert() {
+        if (!wp_verify_nonce($_POST['nonce'] ?? '', 'web2print_test_alert')) {
+            wp_die(__('Acesso negado.', 'web2print-integration'), 403);
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Permissão insuficiente.', 'web2print-integration'), 403);
+        }
+        
+        $this->send_api_alert('test', 'Este é um alerta de teste enviado pelo administrador.');
+        
+        wp_send_json_success(array(
+            'message' => __('Alerta de teste enviado!', 'web2print-integration')
+        ));
     }
 }
 
