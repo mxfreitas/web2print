@@ -7,7 +7,14 @@ import requests
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.secret_key = 'your_secret_key'  # Mude isso para uma chave secreta real
+app.secret_key = 'web2print-secret-key-2024-replit-env'  # Chave secreta configurada
+
+# Configurações de sessão
+app.config['SESSION_COOKIE_SECURE'] = False  # Para desenvolvimento
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutos
+
 db = SQLAlchemy(app)
 app.app_context().push()
 
@@ -34,31 +41,74 @@ def users():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        name = request.form['name']
-        cpf = request.form['cpf']
-        cep = request.form['cep']
+        try:
+            name = request.form.get('name', '').strip()
+            cpf = request.form.get('cpf', '').strip()
+            cep = request.form.get('cep', '').strip()
 
-        # Verificar se o CPF já existe
-        existing_user = User.query.filter_by(cpf=cpf).first()
-        if existing_user:
-            return render_template('register.html', error='CPF já cadastrado')
+            # Validar campos obrigatórios
+            if not name or not cpf or not cep:
+                return render_template('register.html', error='Todos os campos são obrigatórios')
 
-        # Buscar endereço a partir do CEP
-        response = requests.get(f'https://viacep.com.br/ws/{cep}/json/')
-        address_data = response.json()
+            # Verificar se o CPF já existe
+            existing_user = User.query.filter_by(cpf=cpf).first()
+            if existing_user:
+                return render_template('register.html', error='CPF já cadastrado')
 
-        if 'erro' in address_data:
-            return render_template('register.html', error='CEP inválido')
+            # Buscar endereço a partir do CEP
+            try:
+                response = requests.get(f'https://viacep.com.br/ws/{cep}/json/', timeout=10)
+                response.raise_for_status()
+                address_data = response.json()
+            except requests.exceptions.RequestException:
+                return render_template('register.html', error='Erro ao consultar CEP. Tente novamente.')
 
-        address = f"{address_data['logradouro']}, {address_data['bairro']}, {address_data['localidade']} - {address_data['uf']}"
+            if 'erro' in address_data:
+                return render_template('register.html', error='CEP inválido')
 
-        new_user = User(name=name, cpf=cpf, address=address, cep=cep)
-        db.session.add(new_user)
-        db.session.commit()
-        session['cpf'] = cpf
-        return redirect(url_for('upload'))
+            # Verificar se todos os campos do endereço estão presentes
+            required_fields = ['logradouro', 'bairro', 'localidade', 'uf']
+            if not all(field in address_data and address_data[field] for field in required_fields):
+                return render_template('register.html', error='CEP retornou dados incompletos')
+
+            address = f"{address_data['logradouro']}, {address_data['bairro']}, {address_data['localidade']} - {address_data['uf']}"
+
+            # Criar e salvar usuário
+            new_user = User(name=name, cpf=cpf, address=address, cep=cep)
+            db.session.add(new_user)
+            db.session.commit()
+            
+            # Configurar sessão
+            session['cpf'] = cpf
+            session.permanent = True
+            
+            return redirect(url_for('upload'))
+            
+        except Exception as e:
+            db.session.rollback()
+            return render_template('register.html', error=f'Erro interno: {str(e)}')
     
     return render_template('register.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        cpf = request.form.get('cpf', '').strip()
+        
+        if not cpf:
+            return render_template('login.html', error='CPF é obrigatório')
+        
+        # Verificar se o usuário existe
+        user = User.query.filter_by(cpf=cpf).first()
+        if not user:
+            return render_template('login.html', error='CPF não encontrado. Faça seu cadastro primeiro.')
+        
+        # Configurar sessão e redirecionar
+        session['cpf'] = cpf
+        session.permanent = True
+        return redirect(url_for('upload'))
+    
+    return render_template('login.html')
 
 @app.route('/upload', methods=['GET', 'POST'])
 def upload():

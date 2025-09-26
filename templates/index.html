@@ -44,11 +44,13 @@
 </div>
 
 <div class="mt-4">
-    <h2>Bem-vindo à Minha Aplicação!</h2>
-    <p>Esta é uma aplicação de exemplo para gerenciar usuários e seus dados.</p>
+    <h2>Bem-vindo ao Web2Print!</h2>
+    <p>Faça upload de seus arquivos PDF e gerencie suas impressões.</p>
     
     <div class="mt-3">
-        <a href="{{ url_for('upload') }}" class="btn btn-primary">Upload de Arquivo</a>
+        <a href="{{ url_for('login') }}" class="btn btn-primary">Fazer Login</a>
+        <a href="{{ url_for('register') }}" class="btn btn-secondary">Cadastrar-se</a>
+        <a href="{{ url_for('upload') }}" class="btn btn-success">Upload de Arquivo</a>
     </div>
 </div>
 {% endblock %}
