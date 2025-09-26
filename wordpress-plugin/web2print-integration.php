@@ -884,7 +884,7 @@ class Web2PrintIntegration {
             $real_path = realpath($pdf_local_path);
             
             // Verificar se arquivo existe e está dentro dos uploads
-            if (!$real_path || !file_exists($real_path)) {
+            if (!$real_path || !file_exists($real_path) || !is_readable($real_path)) {
                 wp_die(__('Arquivo não encontrado no servidor.', 'web2print-integration'), 404);
             }
             
@@ -910,15 +910,19 @@ class Web2PrintIntegration {
             header('Content-Type: application/pdf');
             header('Content-Disposition: attachment; filename="' . sanitize_file_name($pdf_filename) . '"');
             header('Content-Length: ' . filesize($real_path));
+            header('X-Content-Type-Options: nosniff');
             header('Cache-Control: private, no-cache, no-store, must-revalidate');
             header('Pragma: no-cache');
             header('Expires: 0');
             
-            // Log do acesso para auditoria
+            // Log completo para auditoria
             error_log(sprintf(
-                'Web2Print: Download seguro via arquivo local. Item ID: %d, User: %s, File: %s',
+                'Web2Print: Download LOCAL - Order: %d, Item: %d, User: %d (%s), IP: %s, File: %s',
+                $order_id,
                 $item_id,
+                get_current_user_id(),
                 wp_get_current_user()->user_login,
+                $_SERVER['REMOTE_ADDR'] ?? 'unknown',
                 basename($real_path)
             ));
             
@@ -937,18 +941,30 @@ class Web2PrintIntegration {
             $parsed_url = parse_url($pdf_url);
             $parsed_uploads = parse_url($uploads_url);
             
+            // Validar estrutura das URLs
+            if (!$parsed_url || !$parsed_uploads || 
+                !isset($parsed_url['host']) || !isset($parsed_uploads['host']) ||
+                !isset($parsed_url['path']) || !isset($parsed_uploads['path'])) {
+                error_log(sprintf('Web2Print Security: URL malformada. URL: %s', $pdf_url));
+                wp_die(__('URL do arquivo inválida.', 'web2print-integration'), 400);
+            }
+            
             // Verificar mesmo host e path prefix
             if ($parsed_url['host'] !== $parsed_uploads['host'] || 
                 strpos($parsed_url['path'], $parsed_uploads['path']) !== 0) {
-                error_log(sprintf('Web2Print Security: URL fora dos uploads. URL: %s, Uploads: %s', $pdf_url, $uploads_url));
+                error_log(sprintf('Web2Print Security: URL fora dos uploads. URL host: %s, Uploads host: %s', 
+                    $parsed_url['host'], $parsed_uploads['host']));
                 wp_die(__('Acesso ao arquivo não permitido.', 'web2print-integration'), 403);
             }
             
-            // Log do acesso para auditoria
+            // Log completo para auditoria
             error_log(sprintf(
-                'Web2Print: Download seguro via URL. Item ID: %d, User: %s, URL: %s',
+                'Web2Print: Download URL - Order: %d, Item: %d, User: %d (%s), IP: %s, URL: %s',
+                $order_id,
                 $item_id,
+                get_current_user_id(),
                 wp_get_current_user()->user_login,
+                $_SERVER['REMOTE_ADDR'] ?? 'unknown',
                 $pdf_url
             ));
             
