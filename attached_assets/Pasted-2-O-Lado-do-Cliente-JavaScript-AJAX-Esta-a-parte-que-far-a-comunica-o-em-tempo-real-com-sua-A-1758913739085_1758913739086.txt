@@ -1,0 +1,31 @@
+2. O Lado do Cliente (JavaScript/AJAX)
+Esta é a parte que fará a comunicação em tempo real com sua API no Replit.
+
+Gatilho de Upload: Um script JavaScript customizado é carregado na página do produto. Quando o cliente seleciona um arquivo no campo de upload:
+
+O script pega o PDF e, via AJAX, envia a requisição POST para sua rota /api/v1/analyze_and_calculate (a rota que aceita o arquivo).
+
+Processamento da Resposta da Análise:
+
+O script recebe o JSON da API com os dados: color_pages, mono_pages, total_pages.
+
+Estes dados são salvos em campos ocultos no formulário do produto (para que sejam enviados para o carrinho).
+
+O script ativa as opções de impressão (papel, acabamentos).
+
+Gatilho de Cálculo: Sempre que o cliente mudar uma opção (ex: muda de Sulfite para Couchê, ou aumenta a quantidade de cópias):
+
+O script coleta todos os dados da página (contagem de páginas, papel escolhido, gramatura, quantidade, etc.).
+
+Envia os dados (via POST/JSON) para sua rota /api/v1/calculate_final.
+
+O script recebe o total_cost final e atualiza o preço exibido na interface do WooCommerce.
+
+3. O Lado do Servidor (PHP/WooCommerce Hooks)
+Esta é a parte crucial para a segurança do preço no checkout. O JavaScript apenas mostra o preço; o PHP deve garantir que ele seja aplicado no carrinho.
+
+Hook de Adição ao Carrinho: Você usará o hook woocommerce_add_cart_item_data para interceptar a adição ao carrinho. Neste momento, você armazena todos os detalhes (contagem de páginas, papel, encadernação, o URL do arquivo original, etc.) como metadados do item.
+
+Hook de Preço: Você usará o hook woocommerce_before_calculate_totals para anular o preço do produto (que estava em R$ 0,00) e aplicar o preço final calculado pela sua API Flask.
+
+Melhor Prática de Segurança: Recomenda-se que o PHP faça uma chamada final e segura para sua API (/api/v1/calculate_final) antes de adicionar ao carrinho, enviando todos os metadados (páginas, papel, etc.) para que o Flask revalide o cálculo no backend, garantindo que o cliente não tenha manipulado o preço via JavaScript.

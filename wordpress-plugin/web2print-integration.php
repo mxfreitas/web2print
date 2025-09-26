@@ -225,8 +225,30 @@ class Web2PrintIntegration {
         }
         
         try {
+            // CRÍTICO: SALVAR ARQUIVO PERMANENTEMENTE no WordPress
+            // Configurar wp_handle_upload() para salvar PDF
+            if (!function_exists('wp_handle_upload')) {
+                require_once(ABSPATH . 'wp-admin/includes/file.php');
+            }
+            
+            $upload_overrides = array(
+                'test_form' => false,
+                'mimes' => array('pdf' => 'application/pdf'),
+                'upload_error_handler' => '__return_false'
+            );
+            
+            // Mover arquivo para o diretório de uploads do WordPress  
+            $uploaded_file = wp_handle_upload($file, $upload_overrides);
+            
+            if (isset($uploaded_file['error'])) {
+                wp_send_json_error(array(
+                    'message' => __('Erro ao salvar arquivo: ', 'web2print-integration') . $uploaded_file['error']
+                ));
+                return;
+            }
+            
             // Análise básica do PDF usando funções do WordPress/PHP
-            $pdf_content = file_get_contents($file['tmp_name']);
+            $pdf_content = file_get_contents($uploaded_file['file']);
             
             // Contar páginas aproximadamente (implementação básica)
             $page_count = $this->count_pdf_pages($pdf_content);
@@ -244,7 +266,7 @@ class Web2PrintIntegration {
             // Gerar token de verificação criptográfico
             $verification_token = wp_generate_password(32, false);
             
-            // Salvar análise VERIFICADA na sessão com token
+            // Salvar análise VERIFICADA na sessão com token E URL DO ARQUIVO
             $analysis = array(
                 'total_pages' => $page_count,
                 'color_pages' => $color_pages,
@@ -252,6 +274,8 @@ class Web2PrintIntegration {
                 'filename' => sanitize_file_name($file['name']),
                 'filesize' => $file['size'],
                 'content_hash' => $content_hash,
+                'file_url' => $uploaded_file['url'], // CRÍTICO: URL para acesso da gráfica
+                'file_path' => $uploaded_file['file'], // Caminho completo no servidor
                 'verified' => true, // CRÍTICO: marca como verificado pelo servidor
                 'verification_token' => $verification_token,
                 'timestamp' => time()
@@ -299,19 +323,24 @@ class Web2PrintIntegration {
     public function save_print_metadata($cart_item_key, $product_id, $quantity, $variation_id, $variation, $cart_item_data) {
         $calculation = WC()->session->get('web2print_calculation');
         $config = WC()->session->get('web2print_config');
+        $pdf_analysis = WC()->session->get('web2print_pdf_analysis');
         
-        if ($calculation && $config) {
+        if ($calculation && $config && $pdf_analysis) {
             // Salvar preço POR UNIDADE (cost_per_copy) não o total
             WC()->cart->cart_contents[$cart_item_key]['web2print_cost_per_unit'] = $calculation['cost_details']['cost_per_copy'];
             WC()->cart->cart_contents[$cart_item_key]['web2print_data'] = array(
                 'calculation' => $calculation,
                 'config' => $config,
+                'pdf_file_url' => $pdf_analysis['file_url'], // CRÍTICO: URL do arquivo para gráfica
+                'pdf_filename' => $pdf_analysis['filename'],
+                'pdf_filesize' => $pdf_analysis['filesize'],
                 'timestamp' => current_time('mysql')
             );
             
             // Limpar dados da sessão
             WC()->session->__unset('web2print_calculation');
             WC()->session->__unset('web2print_config');
+            WC()->session->__unset('web2print_pdf_analysis');
         }
     }
     
@@ -394,6 +423,13 @@ class Web2PrintIntegration {
             $item->add_meta_data('_web2print_calculation', $data['calculation']);
             $item->add_meta_data('_web2print_timestamp', $data['timestamp']);
             
+            // CRÍTICO: Salvar informações do arquivo para acesso da gráfica
+            if (isset($data['pdf_file_url'])) {
+                $item->add_meta_data('_web2print_pdf_url', $data['pdf_file_url']);
+                $item->add_meta_data('_web2print_pdf_filename', $data['pdf_filename']);
+                $item->add_meta_data('_web2print_pdf_filesize', $data['pdf_filesize']);
+            }
+            
             // Salvar dados legíveis para o admin (com escape)
             $item->add_meta_data(__('Papel', 'web2print-integration'), esc_html($data['calculation']['breakdown']['paper_info']));
             $item->add_meta_data(__('Encadernação', 'web2print-integration'), esc_html($data['calculation']['breakdown']['binding_info']));
@@ -411,6 +447,17 @@ class Web2PrintIntegration {
             
             $item->add_meta_data(__('Cópias', 'web2print-integration'), $data['config']['copy_quantity']);
             $item->add_meta_data(__('Custo por Cópia', 'web2print-integration'), 'R$ ' . number_format($data['calculation']['cost_details']['cost_per_copy'], 2, ',', '.'));
+            
+            // CRÍTICO: Link do arquivo para download da gráfica
+            if (isset($data['pdf_file_url'])) {
+                $file_link = sprintf(
+                    '<a href="%s" target="_blank" rel="noopener">📥 %s (%s)</a>',
+                    esc_url($data['pdf_file_url']),
+                    esc_html($data['pdf_filename']),
+                    size_format($data['pdf_filesize'])
+                );
+                $item->add_meta_data(__('📁 Arquivo para Impressão', 'web2print-integration'), $file_link, true);
+            }
         }
     }
     
