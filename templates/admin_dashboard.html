@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Administrativo - Web2Print</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .admin-header {
+            background: #dc3545;
+            color: white;
+            padding: 15px 0;
+            margin-bottom: 30px;
+        }
+        .admin-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .admin-nav h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .admin-nav .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+        .admin-nav a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+        }
+        .admin-nav a:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid;
+        }
+        .stat-card.users { border-left-color: #007bff; }
+        .stat-card.uploads { border-left-color: #28a745; }
+        .stat-card.orders { border-left-color: #ffc107; }
+        .stat-card.revenue { border-left-color: #dc3545; }
+        
+        .stat-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+            margin: 10px 0;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 14px;
+            text-transform: uppercase;
+        }
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .action-btn {
+            display: block;
+            padding: 15px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .action-btn:hover {
+            background: #0056b3;
+            color: white;
+        }
+        .recent-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .recent-section h3 {
+            margin: 0 0 20px 0;
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        .user-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .user-item:last-child {
+            border-bottom: none;
+        }
+        .user-info {
+            flex: 1;
+        }
+        .user-name {
+            font-weight: bold;
+            color: #333;
+        }
+        .user-details {
+            font-size: 12px;
+            color: #666;
+        }
+        .user-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-configured {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .alert {
+            padding: 12px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        .alert-success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-header">
+        <div class="container">
+            <nav class="admin-nav">
+                <h1>📊 Dashboard Administrativo</h1>
+                <div class="nav-links">
+                    <a href="{{ url_for('admin_papers') }}">📄 Papéis</a>
+                    <a href="{{ url_for('admin_bindings') }}">📚 Encadernação</a>
+                    <a href="{{ url_for('admin_finishings') }}">✨ Acabamentos</a>
+                    <a href="{{ url_for('users') }}">👥 Usuários</a>
+                    <a href="{{ url_for('admin_logout') }}">🚪 Sair</a>
+                </div>
+            </nav>
+        </div>
+    </div>
+    
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <!-- KPIs Principais -->
+        <div class="stats-grid">
+            <div class="stat-card users">
+                <div class="stat-label">Total de Usuários</div>
+                <div class="stat-number">{{ stats.total_users }}</div>
+                <small>Usuários cadastrados no sistema</small>
+            </div>
+            
+            <div class="stat-card uploads">
+                <div class="stat-label">Total de Uploads</div>
+                <div class="stat-number">{{ stats.total_uploads }}</div>
+                <small>Arquivos enviados</small>
+            </div>
+            
+            <div class="stat-card orders">
+                <div class="stat-label">Pedidos Configurados</div>
+                <div class="stat-number">{{ stats.total_orders }}</div>
+                <small>Taxa de conversão: {{ stats.conversion_rate }}%</small>
+            </div>
+            
+            <div class="stat-card revenue">
+                <div class="stat-label">Receita Total</div>
+                <div class="stat-number">R$ {{ stats.total_revenue }}</div>
+                <small>Ticket médio: R$ {{ stats.average_order }}</small>
+            </div>
+        </div>
+        
+        <!-- Ações Rápidas -->
+        <div class="quick-actions">
+            <a href="{{ url_for('admin_papers_create') }}" class="action-btn">
+                📄 Novo Tipo de Papel
+            </a>
+            <a href="{{ url_for('admin_bindings_create') }}" class="action-btn">
+                📚 Nova Encadernação
+            </a>
+            <a href="{{ url_for('admin_finishings_create') }}" class="action-btn">
+                ✨ Novo Acabamento
+            </a>
+            <a href="{{ url_for('users') }}" class="action-btn">
+                👥 Ver Todos os Usuários
+            </a>
+        </div>
+        
+        <!-- Usuários Recentes -->
+        <div class="recent-section">
+            <h3>👤 Usuários Recentes</h3>
+            {% if recent_users %}
+                {% for user in recent_users %}
+                    <div class="user-item">
+                        <div class="user-info">
+                            <div class="user-name">{{ user.name }}</div>
+                            <div class="user-details">
+                                CPF: {{ user.cpf }}
+                                {% if user.uploaded_file %}
+                                    | Arquivo: {{ user.uploaded_file }}
+                                    {% if user.num_pages %}({{ user.num_pages }} pág.){% endif %}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="user-status {{ 'status-configured' if user.order_configured else 'status-pending' }}">
+                            {{ 'Configurado' if user.order_configured else 'Pendente' }}
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>Nenhum usuário cadastrado ainda.</p>
+            {% endif %}
+        </div>
+        
+        <!-- Estatísticas Adicionais -->
+        <div class="recent-section" style="margin-top: 20px;">
+            <h3>📈 Estatísticas</h3>
+            <p><strong>Papel mais usado:</strong> {{ stats.most_used_paper }}</p>
+            <p><strong>Taxa de conversão:</strong> {{ stats.conversion_rate }}% dos usuários configuraram pedidos</p>
+        </div>
+    </div>
+</body>
+</html>

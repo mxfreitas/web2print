@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerenciar Acabamentos - Admin Web2Print</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .admin-header {
+            background: #dc3545;
+            color: white;
+            padding: 15px 0;
+            margin-bottom: 30px;
+        }
+        .admin-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .admin-nav h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .admin-nav .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+        .admin-nav a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+        }
+        .page-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .finishings-table {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .finishings-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .finishings-table th {
+            background: #f8f9fa;
+            padding: 15px;
+            text-align: left;
+            font-weight: bold;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .finishings-table td {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .price-value {
+            font-weight: bold;
+            color: #28a745;
+            font-size: 18px;
+        }
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 12px;
+            border-radius: 3px;
+            text-decoration: none;
+        }
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-header">
+        <div class="container">
+            <nav class="admin-nav">
+                <h1>✨ Gerenciar Tipos de Acabamento</h1>
+                <div class="nav-links">
+                    <a href="{{ url_for('admin_dashboard') }}">📊 Dashboard</a>
+                    <a href="{{ url_for('admin_papers') }}">📄 Papéis</a>
+                    <a href="{{ url_for('admin_bindings') }}">📚 Encadernação</a>
+                    <a href="{{ url_for('admin_logout') }}">🚪 Sair</a>
+                </div>
+            </nav>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="page-actions">
+            <h2>Tipos de Acabamento Cadastrados</h2>
+            <a href="{{ url_for('admin_finishings_create') }}" class="btn-primary">
+                ➕ Novo Tipo de Acabamento
+            </a>
+        </div>
+        
+        {% if finishings %}
+            <div class="finishings-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Nome de Exibição</th>
+                            <th>Descrição</th>
+                            <th>Preço</th>
+                            <th>Status</th>
+                            <th>Criado em</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for finishing in finishings %}
+                            <tr>
+                                <td><strong>{{ finishing.name }}</strong></td>
+                                <td>{{ finishing.display_name }}</td>
+                                <td>{{ finishing.description or '-' }}</td>
+                                <td><span class="price-value">R$ {{ "%.2f"|format(finishing.price) }}</span></td>
+                                <td>
+                                    <span class="status-badge status-active">
+                                        {{ 'Ativo' if finishing.active else 'Inativo' }}
+                                    </span>
+                                </td>
+                                <td>{{ finishing.created_at.strftime('%d/%m/%Y') if finishing.created_at else '-' }}</td>
+                                <td>
+                                    <div class="actions">
+                                        <a href="#" class="btn-sm btn-warning">
+                                            ✏️ Editar
+                                        </a>
+                                        <a href="#" class="btn-sm btn-danger" 
+                                           onclick="return confirm('Tem certeza que deseja excluir este tipo de acabamento?')">
+                                            🗑️ Excluir
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <h3>✨ Nenhum tipo de acabamento cadastrado</h3>
+                <p>Clique no botão "Novo Tipo de Acabamento" para começar a adicionar tipos de acabamento ao sistema.</p>
+                <a href="{{ url_for('admin_finishings_create') }}" class="btn-primary">
+                    ➕ Adicionar Primeiro Tipo de Acabamento
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>

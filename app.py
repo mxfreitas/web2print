@@ -1,11 +1,13 @@
-from flask import Flask, request, render_template, jsonify, redirect, url_for, session
+from flask import Flask, request, render_template, jsonify, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
 import fitz  # PyMuPDF para análise de cores
 import os
 import requests
 import uuid
+import hashlib
 from werkzeug.utils import secure_filename
+from functools import wraps
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
@@ -45,7 +47,171 @@ class User(db.Model):
     total_cost = db.Column(db.Float, nullable=True)           # custo total final
     order_configured = db.Column(db.Boolean, default=False)   # se o pedido foi configurado
 
+class PaperType(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)  # 'sulfite', 'couche', 'reciclado'
+    display_name = db.Column(db.String(100), nullable=False)      # 'Sulfite', 'Couchê', 'Reciclado'
+    description = db.Column(db.String(200), nullable=True)
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    
+    # Relacionamento com gramaturas
+    weights = db.relationship('PaperWeight', backref='paper_type', lazy=True, cascade="all, delete-orphan")
+
+class PaperWeight(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    paper_type_id = db.Column(db.Integer, db.ForeignKey('paper_type.id'), nullable=False)
+    weight = db.Column(db.Integer, nullable=False)  # 75, 90, 120, etc.
+    price_color = db.Column(db.Float, nullable=False)  # preço por página colorida
+    price_mono = db.Column(db.Float, nullable=False)   # preço por página monocromática
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    
+    # Índice único por tipo de papel + gramatura
+    __table_args__ = (db.UniqueConstraint('paper_type_id', 'weight', name='unique_paper_weight'),)
+
+class BindingType(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)  # 'grampo', 'spiral', etc.
+    display_name = db.Column(db.String(100), nullable=False)      # 'Grampo', 'Espiral', etc.
+    description = db.Column(db.String(200), nullable=True)
+    price = db.Column(db.Float, nullable=False)  # preço da encadernação
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+class FinishingType(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)  # 'laminacao', 'verniz', etc.
+    display_name = db.Column(db.String(100), nullable=False)      # 'Laminação', 'Verniz', etc.
+    description = db.Column(db.String(200), nullable=True)
+    price = db.Column(db.Float, nullable=False)  # preço do acabamento
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+# Modelo para controle administrativo simples
+class Admin(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    password_hash = db.Column(db.String(200), nullable=False)  # Hash da senha
+    active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
 db.create_all()
+
+# Função para popular dados iniciais no banco
+def populate_initial_data():
+    """Popula dados iniciais dos preços no banco de dados"""
+    
+    # Verificar se já existem dados
+    if PaperType.query.count() > 0:
+        return  # Dados já existem
+    
+    try:
+        # Dados dos papéis baseados no PAPER_PRICES
+        paper_data = [
+            {
+                'name': 'sulfite',
+                'display_name': 'Sulfite',
+                'description': 'Papel padrão para impressão',
+                'weights': [
+                    {'weight': 75, 'price_color': 0.45, 'price_mono': 0.08},
+                    {'weight': 90, 'price_color': 0.50, 'price_mono': 0.10},
+                    {'weight': 120, 'price_color': 0.65, 'price_mono': 0.15}
+                ]
+            },
+            {
+                'name': 'couche',
+                'display_name': 'Couchê',
+                'description': 'Papel brilhante para impressão de qualidade',
+                'weights': [
+                    {'weight': 90, 'price_color': 0.70, 'price_mono': 0.20},
+                    {'weight': 115, 'price_color': 0.85, 'price_mono': 0.25},
+                    {'weight': 150, 'price_color': 1.10, 'price_mono': 0.35}
+                ]
+            },
+            {
+                'name': 'reciclado',
+                'display_name': 'Reciclado',
+                'description': 'Papel ecológico reciclado',
+                'weights': [
+                    {'weight': 75, 'price_color': 0.40, 'price_mono': 0.07},
+                    {'weight': 90, 'price_color': 0.45, 'price_mono': 0.08}
+                ]
+            }
+        ]
+        
+        # Criar tipos de papel
+        for paper_info in paper_data:
+            paper_type = PaperType(
+                name=paper_info['name'],
+                display_name=paper_info['display_name'],
+                description=paper_info['description']
+            )
+            db.session.add(paper_type)
+            db.session.flush()  # Para obter o ID
+            
+            # Criar gramaturas para este papel
+            for weight_info in paper_info['weights']:
+                weight = PaperWeight(
+                    paper_type_id=paper_type.id,
+                    weight=weight_info['weight'],
+                    price_color=weight_info['price_color'],
+                    price_mono=weight_info['price_mono']
+                )
+                db.session.add(weight)
+        
+        # Dados de encadernação baseados no BINDING_PRICES
+        binding_data = [
+            {'name': 'grampo', 'display_name': 'Grampo (2 grampos)', 'price': 2.00, 'description': 'Encadernação simples com 2 grampos'},
+            {'name': 'spiral', 'display_name': 'Espiral plástica', 'price': 5.00, 'description': 'Encadernação com espiral plástica'},
+            {'name': 'wire-o', 'display_name': 'Wire-o (espiral metálica)', 'price': 8.00, 'description': 'Encadernação com espiral metálica'},
+            {'name': 'capa-dura', 'display_name': 'Capa dura', 'price': 25.00, 'description': 'Encadernação em capa dura'}
+        ]
+        
+        for binding_info in binding_data:
+            binding = BindingType(
+                name=binding_info['name'],
+                display_name=binding_info['display_name'],
+                description=binding_info['description'],
+                price=binding_info['price']
+            )
+            db.session.add(binding)
+        
+        # Dados de acabamento baseados no FINISHING_PRICES
+        finishing_data = [
+            {'name': 'laminacao', 'display_name': 'Laminação', 'price': 3.00, 'description': 'Laminação plástica'},
+            {'name': 'verniz', 'display_name': 'Verniz', 'price': 2.50, 'description': 'Aplicação de verniz'},
+            {'name': 'dobra', 'display_name': 'Dobra', 'price': 1.50, 'description': 'Dobra no papel'},
+            {'name': 'perfuracao', 'display_name': 'Perfuração', 'price': 1.00, 'description': 'Perfuração para arquivo'}
+        ]
+        
+        for finishing_info in finishing_data:
+            finishing = FinishingType(
+                name=finishing_info['name'],
+                display_name=finishing_info['display_name'],
+                description=finishing_info['description'],
+                price=finishing_info['price']
+            )
+            db.session.add(finishing)
+        
+        # Criar admin padrão (senha: admin123)
+        import hashlib
+        admin_password = hashlib.sha256("admin123".encode()).hexdigest()
+        admin_user = Admin(
+            username="admin",
+            password_hash=admin_password
+        )
+        db.session.add(admin_user)
+        
+        db.session.commit()
+        print("✅ Dados iniciais inseridos no banco de dados!")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Erro ao inserir dados iniciais: {str(e)}")
+
+# Popular dados iniciais na inicialização
+populate_initial_data()
 
 def analyze_pdf_colors(file_path):
     """Analisa cores em um PDF e retorna estatísticas"""
@@ -193,7 +359,84 @@ FINISHING_PRICES = {
 def calculate_advanced_cost(color_pages, mono_pages, paper_type='sulfite', 
                           paper_weight=90, binding_type='grampo', 
                           finishing=None, copy_quantity=1):
-    """Calcula custo avançado baseado em todas as configurações"""
+    """Calcula custo avançado baseado nos dados do banco de dados"""
+    
+    try:
+        # Buscar preço do papel
+        paper_type_obj = PaperType.query.filter_by(name=paper_type, active=True).first()
+        if not paper_type_obj:
+            # Fallback para sulfite se não encontrar
+            paper_type_obj = PaperType.query.filter_by(name='sulfite', active=True).first()
+        
+        if not paper_type_obj:
+            # Fallback final usando preços hardcoded se não houver dados no banco
+            return calculate_advanced_cost_fallback(color_pages, mono_pages, paper_type, 
+                                                 paper_weight, binding_type, finishing, copy_quantity)
+        
+        # Buscar gramatura específica
+        paper_weight_obj = PaperWeight.query.filter_by(
+            paper_type_id=paper_type_obj.id, 
+            weight=paper_weight,
+            active=True
+        ).first()
+        
+        if not paper_weight_obj:
+            # Buscar gramatura mais próxima
+            available_weights = PaperWeight.query.filter_by(
+                paper_type_id=paper_type_obj.id,
+                active=True
+            ).all()
+            
+            if available_weights:
+                paper_weight_obj = min(available_weights, 
+                                     key=lambda x: abs(x.weight - paper_weight))
+        
+        if not paper_weight_obj:
+            return calculate_advanced_cost_fallback(color_pages, mono_pages, paper_type, 
+                                                 paper_weight, binding_type, finishing, copy_quantity)
+        
+        # Calcular custo das páginas
+        pages_cost = (color_pages * paper_weight_obj.price_color) + (mono_pages * paper_weight_obj.price_mono)
+        
+        # Buscar custo de encadernação
+        binding_obj = BindingType.query.filter_by(name=binding_type, active=True).first()
+        binding_cost = binding_obj.price if binding_obj else 0
+        
+        # Calcular custo de acabamento
+        finishing_cost = 0
+        if finishing:
+            finishing_options = finishing.split(',')
+            for option in finishing_options:
+                option = option.strip()
+                finishing_obj = FinishingType.query.filter_by(name=option, active=True).first()
+                if finishing_obj:
+                    finishing_cost += finishing_obj.price
+        
+        # Custo por exemplar
+        cost_per_copy = pages_cost + binding_cost + finishing_cost
+        
+        # Custo total considerando quantidade
+        total_cost = cost_per_copy * copy_quantity
+        
+        return {
+            'pages_cost': round(pages_cost, 2),
+            'binding_cost': round(binding_cost, 2),
+            'finishing_cost': round(finishing_cost, 2),
+            'cost_per_copy': round(cost_per_copy, 2),
+            'total_cost': round(total_cost, 2),
+            'copy_quantity': copy_quantity
+        }
+        
+    except Exception as e:
+        print(f"Erro no cálculo avançado: {str(e)}")
+        # Fallback para função com preços hardcoded
+        return calculate_advanced_cost_fallback(color_pages, mono_pages, paper_type, 
+                                             paper_weight, binding_type, finishing, copy_quantity)
+
+def calculate_advanced_cost_fallback(color_pages, mono_pages, paper_type='sulfite', 
+                                   paper_weight=90, binding_type='grampo', 
+                                   finishing=None, copy_quantity=1):
+    """Função de fallback usando preços hardcoded (compatibilidade)"""
     
     # Validar se o tipo de papel e gramatura existem
     if paper_type not in PAPER_PRICES:
@@ -235,6 +478,296 @@ def calculate_advanced_cost(color_pages, mono_pages, paper_type='sulfite',
         'total_cost': round(total_cost, 2),
         'copy_quantity': copy_quantity
     }
+
+# ============================================
+# SISTEMA ADMINISTRATIVO
+# ============================================
+
+def admin_required(f):
+    """Decorator para verificar autenticação administrativa"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'admin_logged_in' not in session:
+            flash('Acesso negado. Faça login como administrador.', 'error')
+            return redirect(url_for('admin_login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def get_admin_stats():
+    """Calcula estatísticas para o dashboard administrativo"""
+    try:
+        total_users = User.query.count()
+        total_uploads = User.query.filter(User.uploaded_file.isnot(None)).count()
+        
+        # Calcular receita total (usuários com pedidos configurados)
+        users_with_orders = User.query.filter(
+            User.order_configured == True,
+            User.total_cost.isnot(None)
+        ).all()
+        
+        total_revenue = sum(user.total_cost for user in users_with_orders if user.total_cost)
+        average_order = total_revenue / len(users_with_orders) if users_with_orders else 0
+        
+        # Estatísticas de papel mais usado
+        paper_usage = {}
+        for user in users_with_orders:
+            if user.paper_type:
+                paper_usage[user.paper_type] = paper_usage.get(user.paper_type, 0) + 1
+        
+        most_used_paper = max(paper_usage.items(), key=lambda x: x[1]) if paper_usage else ('N/A', 0)
+        
+        return {
+            'total_users': total_users,
+            'total_uploads': total_uploads,
+            'total_orders': len(users_with_orders),
+            'total_revenue': round(total_revenue, 2),
+            'average_order': round(average_order, 2),
+            'most_used_paper': most_used_paper[0],
+            'conversion_rate': round((len(users_with_orders) / total_users * 100) if total_users > 0 else 0, 1)
+        }
+    except Exception as e:
+        print(f"Erro ao calcular estatísticas: {str(e)}")
+        return {
+            'total_users': 0, 'total_uploads': 0, 'total_orders': 0,
+            'total_revenue': 0, 'average_order': 0, 'most_used_paper': 'N/A',
+            'conversion_rate': 0
+        }
+
+@app.route('/admin/login', methods=['GET', 'POST'])
+def admin_login():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        
+        if not username or not password:
+            flash('Usuário e senha são obrigatórios', 'error')
+            return render_template('admin_login.html')
+        
+        # Hash da senha fornecida
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+        
+        # Verificar credenciais
+        admin = Admin.query.filter_by(username=username, password_hash=password_hash, active=True).first()
+        
+        if admin:
+            session['admin_logged_in'] = True
+            session['admin_username'] = username
+            flash('Login realizado com sucesso!', 'success')
+            return redirect(url_for('admin_dashboard'))
+        else:
+            flash('Credenciais inválidas', 'error')
+    
+    return render_template('admin_login.html')
+
+@app.route('/admin/logout')
+def admin_logout():
+    session.pop('admin_logged_in', None)
+    session.pop('admin_username', None)
+    flash('Logout realizado com sucesso!', 'success')
+    return redirect(url_for('admin_login'))
+
+@app.route('/admin')
+@admin_required
+def admin_dashboard():
+    stats = get_admin_stats()
+    recent_users = User.query.order_by(User.id.desc()).limit(5).all()
+    return render_template('admin_dashboard.html', stats=stats, recent_users=recent_users)
+
+# ============================================
+# CRUD ADMINISTRATIVO - TIPOS DE PAPEL
+# ============================================
+
+@app.route('/admin/papers')
+@admin_required
+def admin_papers():
+    papers = PaperType.query.all()
+    return render_template('admin_papers.html', papers=papers)
+
+@app.route('/admin/papers/create', methods=['GET', 'POST'])
+@admin_required
+def admin_papers_create():
+    if request.method == 'POST':
+        try:
+            name = request.form.get('name', '').strip()
+            display_name = request.form.get('display_name', '').strip()
+            description = request.form.get('description', '').strip()
+            
+            if not name or not display_name:
+                flash('Nome e nome de exibição são obrigatórios', 'error')
+                return render_template('admin_paper_form.html')
+            
+            # Verificar se já existe
+            existing = PaperType.query.filter_by(name=name).first()
+            if existing:
+                flash('Já existe um tipo de papel com esse nome', 'error')
+                return render_template('admin_paper_form.html')
+            
+            # Criar novo tipo de papel
+            paper_type = PaperType(
+                name=name,
+                display_name=display_name,
+                description=description
+            )
+            db.session.add(paper_type)
+            db.session.commit()
+            
+            flash('Tipo de papel criado com sucesso!', 'success')
+            return redirect(url_for('admin_papers'))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Erro ao criar tipo de papel: {str(e)}', 'error')
+    
+    return render_template('admin_paper_form.html')
+
+@app.route('/admin/papers/<int:paper_id>/weights')
+@admin_required
+def admin_paper_weights(paper_id):
+    paper = PaperType.query.get_or_404(paper_id)
+    weights = PaperWeight.query.filter_by(paper_type_id=paper_id).all()
+    return render_template('admin_paper_weights.html', paper=paper, weights=weights)
+
+@app.route('/admin/papers/<int:paper_id>/weights/create', methods=['GET', 'POST'])
+@admin_required
+def admin_paper_weights_create(paper_id):
+    paper = PaperType.query.get_or_404(paper_id)
+    
+    if request.method == 'POST':
+        try:
+            weight = request.form.get('weight', type=int)
+            price_color = request.form.get('price_color', type=float)
+            price_mono = request.form.get('price_mono', type=float)
+            
+            if not weight or price_color is None or price_mono is None:
+                flash('Todos os campos são obrigatórios', 'error')
+                return render_template('admin_weight_form.html', paper=paper)
+            
+            # Verificar se já existe essa gramatura para este papel
+            existing = PaperWeight.query.filter_by(paper_type_id=paper_id, weight=weight).first()
+            if existing:
+                flash('Já existe essa gramatura para este tipo de papel', 'error')
+                return render_template('admin_weight_form.html', paper=paper)
+            
+            # Criar nova gramatura
+            paper_weight = PaperWeight(
+                paper_type_id=paper_id,
+                weight=weight,
+                price_color=price_color,
+                price_mono=price_mono
+            )
+            db.session.add(paper_weight)
+            db.session.commit()
+            
+            flash('Gramatura adicionada com sucesso!', 'success')
+            return redirect(url_for('admin_paper_weights', paper_id=paper_id))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Erro ao adicionar gramatura: {str(e)}', 'error')
+    
+    return render_template('admin_weight_form.html', paper=paper)
+
+# ============================================
+# CRUD ADMINISTRATIVO - TIPOS DE ENCADERNAÇÃO
+# ============================================
+
+@app.route('/admin/bindings')
+@admin_required
+def admin_bindings():
+    bindings = BindingType.query.all()
+    return render_template('admin_bindings.html', bindings=bindings)
+
+@app.route('/admin/bindings/create', methods=['GET', 'POST'])
+@admin_required
+def admin_bindings_create():
+    if request.method == 'POST':
+        try:
+            name = request.form.get('name', '').strip()
+            display_name = request.form.get('display_name', '').strip()
+            description = request.form.get('description', '').strip()
+            price = request.form.get('price', type=float)
+            
+            if not name or not display_name or price is None:
+                flash('Nome, nome de exibição e preço são obrigatórios', 'error')
+                return render_template('admin_binding_form.html')
+            
+            # Verificar se já existe
+            existing = BindingType.query.filter_by(name=name).first()
+            if existing:
+                flash('Já existe um tipo de encadernação com esse nome', 'error')
+                return render_template('admin_binding_form.html')
+            
+            # Criar novo tipo de encadernação
+            binding_type = BindingType(
+                name=name,
+                display_name=display_name,
+                description=description,
+                price=price
+            )
+            db.session.add(binding_type)
+            db.session.commit()
+            
+            flash('Tipo de encadernação criado com sucesso!', 'success')
+            return redirect(url_for('admin_bindings'))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Erro ao criar tipo de encadernação: {str(e)}', 'error')
+    
+    return render_template('admin_binding_form.html')
+
+# ============================================
+# CRUD ADMINISTRATIVO - TIPOS DE ACABAMENTO
+# ============================================
+
+@app.route('/admin/finishings')
+@admin_required
+def admin_finishings():
+    finishings = FinishingType.query.all()
+    return render_template('admin_finishings.html', finishings=finishings)
+
+@app.route('/admin/finishings/create', methods=['GET', 'POST'])
+@admin_required
+def admin_finishings_create():
+    if request.method == 'POST':
+        try:
+            name = request.form.get('name', '').strip()
+            display_name = request.form.get('display_name', '').strip()
+            description = request.form.get('description', '').strip()
+            price = request.form.get('price', type=float)
+            
+            if not name or not display_name or price is None:
+                flash('Nome, nome de exibição e preço são obrigatórios', 'error')
+                return render_template('admin_finishing_form.html')
+            
+            # Verificar se já existe
+            existing = FinishingType.query.filter_by(name=name).first()
+            if existing:
+                flash('Já existe um tipo de acabamento com esse nome', 'error')
+                return render_template('admin_finishing_form.html')
+            
+            # Criar novo tipo de acabamento
+            finishing_type = FinishingType(
+                name=name,
+                display_name=display_name,
+                description=description,
+                price=price
+            )
+            db.session.add(finishing_type)
+            db.session.commit()
+            
+            flash('Tipo de acabamento criado com sucesso!', 'success')
+            return redirect(url_for('admin_finishings'))
+            
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Erro ao criar tipo de acabamento: {str(e)}', 'error')
+    
+    return render_template('admin_finishing_form.html')
+
+# ============================================
+# ROTAS PRINCIPAIS DO SISTEMA (EXISTENTES)
+# ============================================
 
 @app.route('/')
 def index():
