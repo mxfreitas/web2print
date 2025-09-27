@@ -192,12 +192,17 @@ class Web2PrintIntegration {
             return false;
         }
         
+        // FASE 1: Timeout otimizado baseado no tamanho dos dados
+        $estimated_size = strlen(json_encode($data));
+        $timeout = ($estimated_size > 1000) ? 25 : 15; // Timeout dinâmico
+        
         $args = array(
             'method' => 'POST',
-            'timeout' => 30,
+            'timeout' => $timeout, // Otimizado da Fase 1
             'headers' => array(
                 'Content-Type' => 'application/json',
-                'X-API-Key' => $this->api_key
+                'X-API-Key' => $this->api_key,
+                'User-Agent' => 'Web2Print-Plugin/1.0'
             ),
             'body' => json_encode($data)
         );
@@ -364,7 +369,7 @@ class Web2PrintIntegration {
     }
     
     private function analyze_pdf_via_flask($pdf_url) {
-        // CRÍTICO: Análise centralizada via Flask API com PyMuPDF
+        // CRÍTICO: Análise centralizada via Flask API com PyMuPDF - FASE 1 OTIMIZADA
         if (empty($this->api_endpoint) || empty($this->api_key)) {
             error_log('Web2Print: API endpoint ou key não configurados para análise');
             return false;
@@ -373,15 +378,40 @@ class Web2PrintIntegration {
         // Preparar URL da rota de análise
         $analyze_url = rtrim($this->api_endpoint, '/') . '/analyze_pdf_url';
         
+        // FASE 1: Verificação rápida de tamanho antes da análise
+        $head_response = wp_remote_head($pdf_url, array('timeout' => 5));
+        $file_size = 0;
+        if (!is_wp_error($head_response)) {
+            $content_length = wp_remote_retrieve_header($head_response, 'content-length');
+            $file_size = $content_length ? intval($content_length) : 0;
+        }
+        
+        // Timeout dinâmico baseado no tamanho (Fase 1)
+        $timeout = 30; // Default
+        if ($file_size > 0) {
+            if ($file_size <= 10 * 1024 * 1024) { // <= 10MB
+                $timeout = 20;
+            } elseif ($file_size <= 25 * 1024 * 1024) { // <= 25MB
+                $timeout = 35;
+            } else { // > 25MB
+                $timeout = 50;
+            }
+        }
+        
+        error_log(sprintf('Web2Print: Iniciando análise PDF - Tamanho: %s, Timeout: %ds', 
+            $file_size ? size_format($file_size) : 'desconhecido', $timeout));
+        
         $args = array(
             'method' => 'POST',
-            'timeout' => 45, // Tempo maior para download + análise
+            'timeout' => $timeout, // Timeout otimizado da Fase 1
             'headers' => array(
                 'Content-Type' => 'application/json',
-                'X-API-Key' => $this->api_key
+                'X-API-Key' => $this->api_key,
+                'User-Agent' => 'Web2Print-Analyzer/1.0'
             ),
             'body' => json_encode(array(
-                'pdf_url' => $pdf_url
+                'pdf_url' => $pdf_url,
+                'file_size_hint' => $file_size
             ))
         );
         
@@ -1010,7 +1040,7 @@ class Web2PrintIntegration {
     }
     
     /**
-     * Monitorar saúde da API automaticamente
+     * Monitorar saúde da API automaticamente - FASE 1 OTIMIZADA
      */
     public function monitor_api_health() {
         if (empty($this->api_endpoint) || empty($this->api_key)) {
@@ -1020,11 +1050,13 @@ class Web2PrintIntegration {
         $start_time = microtime(true);
         $health_url = rtrim($this->api_endpoint, '/') . '/health';
         
+        // FASE 1: Timeout otimizado para 3 segundos (alinhado com Flask)
         $response = wp_remote_get($health_url, array(
-            'timeout' => 10,
+            'timeout' => 3, // Otimizado da Fase 1
             'headers' => array(
                 'X-API-Key' => $this->api_key
-            )
+            ),
+            'user-agent' => 'Web2Print-Monitor/1.0'
         ));
         
         $response_time = (microtime(true) - $start_time) * 1000; // ms

@@ -1646,9 +1646,9 @@ def api_analyze_pdf_url():
                 # Verificar se PyMuPDF está disponível
                 try:
                     import fitz
-                except ImportError:
-                    logger.warning("PyMuPDF não encontrado, importando dinamicamente...")
-                    import fitz
+                except ImportError as fitz_error:
+                    logger.warning(f"PyMuPDF não encontrado: {fitz_error}")
+                    raise ImportError("PyMuPDF não disponível") from fitz_error
                     
                 color_stats = analyze_pdf_colors(temp_path)
                 analysis_method = 'PyMuPDF_precise'
