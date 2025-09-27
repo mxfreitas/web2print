@@ -10,7 +10,9 @@ import tempfile
 import contextlib
 import logging
 import time
-from datetime import datetime
+import json
+import threading
+from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -293,6 +295,26 @@ class Admin(db.Model):
     password_hash = db.Column(db.String(200), nullable=False)  # Hash da senha
     active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+# MODELO PARA SISTEMA ASSÍNCRONO - PRIORIDADE 1
+class Job(db.Model):
+    id = db.Column(db.String(36), primary_key=True)  # UUID como string
+    job_type = db.Column(db.String(50), nullable=False)  # 'pdf_analysis_url'
+    status = db.Column(db.String(20), nullable=False, default='pending')  # pending, running, completed, failed
+    progress = db.Column(db.Integer, nullable=False, default=0)  # 0-100
+    input_data = db.Column(db.Text, nullable=False)  # JSON com dados de entrada
+    result_data = db.Column(db.Text, nullable=True)  # JSON com resultado
+    error_message = db.Column(db.String(500), nullable=True)  # mensagem de erro
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    expires_at = db.Column(db.DateTime, nullable=False)  # quando o job expira
+    started_at = db.Column(db.DateTime, nullable=True)  # quando começou processamento
+    completed_at = db.Column(db.DateTime, nullable=True)  # quando terminou
+    
+    # Índices para consultas eficientes
+    __table_args__ = (
+        db.Index('idx_job_status_created', 'status', 'created_at'),
+        db.Index('idx_job_expires', 'expires_at'),
+    )
 
 db.create_all()
 
@@ -1626,11 +1648,49 @@ def api_analyze_pdf_url():
                 'error_code': 'FILE_TOO_LARGE_PRECHECK'
             }), 400
             
-        # Determinar estratégia de processamento
-        strategy = get_processing_strategy(size_check['size'])
-        logger.info(f"Estratégia de processamento: {strategy['message']}")
+        # PRIORIDADE 1: DECISÃO SÍNCRONO vs ASSÍNCRONO  
+        file_size = size_check['size'] if size_check['size'] > 0 else 0
         
-        # PROCESSAMENTO COM CONTEXT MANAGER ROBUSTO
+        # Se arquivo grande (>10MB) ou tamanho desconhecido (potencialmente grande), usar processamento assíncrono
+        if file_size > MAX_PDF_SIZE_SYNC or file_size == 0:
+            logger.info(f"Arquivo grande ou tamanho desconhecido ({file_size:,} bytes) - criando job assíncrono")
+            
+            # Criar job assíncrono
+            job_id = str(uuid.uuid4())
+            input_data = {
+                'pdf_url': pdf_url,
+                'file_size_hint': file_size,
+                'api_key': api_key  # Para o worker usar
+            }
+            
+            job = Job(
+                id=job_id,
+                job_type='pdf_analysis_url',
+                status='pending',
+                progress=0,
+                input_data=json.dumps(input_data),
+                expires_at=datetime.now() + timedelta(hours=2)  # Expira em 2 horas
+            )
+            
+            db.session.add(job)
+            db.session.commit()
+            
+            logger.info(f"Job criado: {job_id} para PDF: {pdf_url}")
+            
+            # Retornar 202 Accepted com job_id para polling
+            return jsonify({
+                'success': True,
+                'job_id': job_id,
+                'status': 'processing',
+                'message': 'PDF enfileirado para processamento assíncrono',
+                'estimated_time_seconds': 45 if file_size > 0 else 60,
+                'polling_url': f'/api/v1/jobs/{job_id}'
+            }), 202
+        
+        else:
+            logger.info(f"Arquivo pequeno ({file_size:,} bytes) - processamento síncrono")
+        
+        # PROCESSAMENTO SÍNCRONO PARA ARQUIVOS PEQUENOS
         with secure_temp_pdf_file() as temp_path:
             # DOWNLOAD SEGURO COM LIMITE RÍGIDO DE BYTES
             downloaded = 0
@@ -1766,6 +1826,332 @@ def api_analyze_pdf_url():
         return jsonify({
             'success': False,
             'error': f'Erro interno: {str(e)}',
+            'error_code': 'INTERNAL_ERROR'
+        }), 500
+
+# ============================================
+# WORKER THREAD PARA PROCESSAMENTO ASSÍNCRONO - PRIORIDADE 1
+# ============================================
+
+def process_pdf_analysis_job(job):
+    """
+    Processa um job de análise de PDF - extraído da lógica síncrona
+    """
+    try:
+        # Parse dos dados de entrada
+        input_data = json.loads(job.input_data)
+        pdf_url = input_data['pdf_url']
+        api_key = input_data['api_key']
+        file_size_hint = input_data.get('file_size_hint', 0)
+        
+        logger.info(f"Iniciando processamento assíncrono do job {job.id} para PDF: {pdf_url}")
+        
+        # Atualizar status para 'running'
+        job.status = 'running'
+        job.started_at = datetime.now()
+        job.progress = 10
+        db.session.commit()
+        
+        # Validações de segurança (similar ao código síncrono)
+        from urllib.parse import urlparse
+        import ipaddress
+        
+        parsed = urlparse(pdf_url)
+        if parsed.scheme not in ('http', 'https'):
+            raise ValueError('URL deve usar http:// ou https://')
+        
+        # DOWNLOAD SEGURO (mesma lógica do código síncrono)
+        operation_start = time.time()
+        
+        # Conectar e baixar com timeout otimizado
+        connect_timeout = 5
+        read_timeout = PDF_DOWNLOAD_TIMEOUT
+        
+        logger.info(f"Job {job.id}: Iniciando download seguro de PDF")
+        response = requests.get(
+            pdf_url, 
+            timeout=(connect_timeout, read_timeout), 
+            stream=True, 
+            allow_redirects=False,
+            headers={'User-Agent': 'Web2Print-Worker/1.0'}
+        )
+        
+        if response.status_code in (301, 302, 303, 307, 308):
+            raise ValueError('Redirects não são permitidos por segurança')
+            
+        response.raise_for_status()
+        
+        # Verificar Content-Type
+        content_type = response.headers.get('content-type', '')
+        if not content_type.startswith('application/pdf'):
+            raise ValueError(f'Content-Type inválido: {content_type}')
+        
+        job.progress = 20
+        db.session.commit()
+        
+        # PROCESSAMENTO COM CONTEXT MANAGER
+        with secure_temp_pdf_file() as temp_path:
+            # Download em chunks com limite rígido
+            downloaded = 0
+            chunk_count = 0
+            download_start = time.time()
+            
+            expected_size = response.headers.get('content-length')
+            if expected_size:
+                expected_size = int(expected_size)
+                logger.info(f"Job {job.id}: Tamanho esperado {expected_size:,} bytes")
+            
+            job.progress = 30
+            db.session.commit()
+            
+            with open(temp_path, 'wb') as temp_file:
+                try:
+                    for chunk in response.iter_content(chunk_size=64*1024):
+                        if chunk:
+                            chunk_count += 1
+                            downloaded += len(chunk)
+                            
+                            # Limite rígido
+                            if downloaded > MAX_PDF_SIZE_TOTAL:
+                                raise ValueError(f'Arquivo muito grande: {downloaded/1024/1024:.1f}MB')
+                            
+                            temp_file.write(chunk)
+                            
+                            # Atualizar progresso do download (30% a 60%)
+                            if chunk_count % 50 == 0:  # Atualizar a cada 50 chunks (3.2MB)
+                                progress = 30 + int(30 * downloaded / MAX_PDF_SIZE_TOTAL)
+                                if progress != job.progress:
+                                    job.progress = min(progress, 60)
+                                    db.session.commit()
+                                    
+                except requests.exceptions.RequestException as download_error:
+                    raise ValueError(f'Erro durante download: {download_error}')
+            
+            download_duration = time.time() - download_start
+            logger.info(f"Job {job.id}: Download concluído - {downloaded:,} bytes em {download_duration:.2f}s")
+            
+            job.progress = 70
+            db.session.commit()
+            
+            # ANÁLISE DO PDF (70% a 90%)
+            analysis_start = time.time()
+            
+            try:
+                # Tentar PyMuPDF
+                try:
+                    import fitz
+                except ImportError:
+                    import fitz
+                    
+                color_stats = analyze_pdf_colors(temp_path)
+                analysis_method = 'PyMuPDF_precise'
+                logger.info(f"Job {job.id}: Análise PyMuPDF concluída")
+                
+            except ImportError:
+                # Fallback PyPDF2
+                logger.warning(f"Job {job.id}: PyMuPDF não disponível, usando PyPDF2")
+                with open(temp_path, 'rb') as pdf_file:
+                    pdf_reader = PyPDF2.PdfReader(pdf_file)
+                    total_pages = len(pdf_reader.pages)
+                    color_pages = max(1, int(total_pages * 0.3))
+                    mono_pages = total_pages - color_pages
+                    
+                color_stats = {
+                    'total_pages': total_pages,
+                    'color_pages': color_pages,
+                    'mono_pages': mono_pages,
+                    'color_type': 'mixed' if color_pages > 0 else 'mono'
+                }
+                analysis_method = 'PyPDF2_estimate'
+            
+            analysis_duration = time.time() - analysis_start
+            total_duration = time.time() - operation_start
+            
+            job.progress = 90
+            db.session.commit()
+            
+            # Preparar resultado
+            result_data = {
+                'total_pages': color_stats['total_pages'],
+                'color_pages': color_stats['color_pages'], 
+                'mono_pages': color_stats['mono_pages'],
+                'color_type': color_stats['color_type'],
+                'analysis_method': analysis_method,
+                'file_size_bytes': downloaded,
+                'processing_time_seconds': round(total_duration, 2)
+            }
+            
+            # Finalizar job
+            job.status = 'completed'
+            job.progress = 100
+            job.completed_at = datetime.now()
+            job.result_data = json.dumps(result_data)
+            db.session.commit()
+            
+            logger.info(
+                f"Job {job.id} CONCLUÍDO - Método: {analysis_method}, "
+                f"Arquivo: {downloaded/1024:.1f}KB, Total: {total_duration:.2f}s"
+            )
+            
+            # Log de performance
+            log_api_performance(
+                operation=f'pdf_analysis_async_{job.id}',
+                duration=total_duration,
+                file_size=downloaded,
+                success=True
+            )
+            
+    except Exception as e:
+        # Marcar job como falhado
+        job.status = 'failed'
+        job.completed_at = datetime.now()
+        job.error_message = str(e)
+        db.session.commit()
+        
+        logger.error(f"Job {job.id} FALHOU: {str(e)}")
+        
+        log_api_performance(
+            operation=f'pdf_analysis_async_{job.id}',
+            duration=time.time() - operation_start if 'operation_start' in locals() else 0,
+            file_size=0,
+            success=False
+        )
+
+def async_worker():
+    """
+    Worker thread que processa jobs pendentes continuamente
+    """
+    logger.info("Worker assíncrono iniciado")
+    
+    while True:
+        try:
+            # CRÍTICO: Flask context necessário para acessar banco de dados
+            with app.app_context():
+                # Buscar próximo job pendente
+                job = Job.query.filter_by(status='pending').order_by(Job.created_at).first()
+            
+                if job:
+                    # Verificar se não expirou
+                    if job.expires_at < datetime.now():
+                        logger.info(f"Job expirado removido pelo worker: {job.id}")
+                        db.session.delete(job)
+                        db.session.commit()
+                        continue
+                    
+                    # Processar job
+                    if job.job_type == 'pdf_analysis_url':
+                        process_pdf_analysis_job(job)
+                    else:
+                        logger.warning(f"Tipo de job desconhecido: {job.job_type}")
+                        job.status = 'failed'
+                        job.error_message = f'Tipo de job não suportado: {job.job_type}'
+                        db.session.commit()
+                else:
+                    # Sem jobs pendentes, aguardar
+                    time.sleep(2)
+                
+        except Exception as e:
+            logger.error(f"Erro no worker assíncrono: {str(e)}")
+            time.sleep(5)  # Aguardar mais em caso de erro
+
+# Iniciar worker thread em background
+worker_thread = threading.Thread(target=async_worker, daemon=True)
+worker_thread.start()
+
+logger.info("Sistema assíncrono inicializado - worker thread iniciado")
+
+# ============================================
+# ENDPOINT PARA POLLING DE JOBS ASSÍNCRONOS - PRIORIDADE 1
+# ============================================
+
+@app.route('/api/v1/jobs/<job_id>', methods=['GET', 'OPTIONS'])
+@csrf.exempt
+def api_get_job_status(job_id):
+    """
+    Endpoint para consultar status de jobs assíncronos via polling
+    
+    GET /api/v1/jobs/<job_id>
+    Response:
+    - 200: Job encontrado (pending, running, completed, failed)
+    - 404: Job não encontrado ou expirado
+    - 410: Job expirado (Gone)
+    """
+    # CORS headers para WordPress
+    if request.method == 'OPTIONS':
+        return '', 200, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+        }
+    
+    try:
+        # Buscar job no banco
+        job = Job.query.filter_by(id=job_id).first()
+        
+        if not job:
+            return jsonify({
+                'success': False,
+                'error': 'Job não encontrado',
+                'error_code': 'JOB_NOT_FOUND'
+            }), 404
+        
+        # Verificar se job expirou
+        if job.expires_at < datetime.now():
+            logger.info(f"Job expirado removido: {job_id}")
+            db.session.delete(job)
+            db.session.commit()
+            return jsonify({
+                'success': False,
+                'error': 'Job expirado',
+                'error_code': 'JOB_EXPIRED'
+            }), 410  # Gone
+        
+        # Preparar resposta baseada no status
+        response_data = {
+            'job_id': job.id,
+            'status': job.status,
+            'progress': job.progress,
+            'created_at': job.created_at.isoformat(),
+        }
+        
+        # Adicionar dados específicos por status
+        if job.status == 'pending':
+            response_data.update({
+                'message': 'Job aguardando processamento',
+                'estimated_time_seconds': 45
+            })
+            
+        elif job.status == 'running':
+            response_data.update({
+                'message': f'Processando PDF... {job.progress}%',
+                'started_at': job.started_at.isoformat() if job.started_at else None
+            })
+            
+        elif job.status == 'completed':
+            # Job concluído - retornar resultado
+            result_data = json.loads(job.result_data) if job.result_data else {}
+            response_data.update({
+                'success': True,
+                'message': 'PDF processado com sucesso',
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                'data': result_data
+            })
+            
+        elif job.status == 'failed':
+            response_data.update({
+                'success': False,
+                'message': 'Falha no processamento do PDF',
+                'error': job.error_message,
+                'completed_at': job.completed_at.isoformat() if job.completed_at else None
+            })
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Erro ao consultar job {job_id}: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Erro interno do servidor',
             'error_code': 'INTERNAL_ERROR'
         }), 500
 

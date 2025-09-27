@@ -369,7 +369,7 @@ class Web2PrintIntegration {
     }
     
     private function analyze_pdf_via_flask($pdf_url) {
-        // CRÍTICO: Análise centralizada via Flask API com PyMuPDF - FASE 1 OTIMIZADA
+        // CRÍTICO: Análise centralizada via Flask API com PyMuPDF + SISTEMA ASSÍNCRONO
         if (empty($this->api_endpoint) || empty($this->api_key)) {
             error_log('Web2Print: API endpoint ou key não configurados para análise');
             return false;
@@ -424,20 +424,153 @@ class Web2PrintIntegration {
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
+        $response_code = wp_remote_retrieve_response_code($response);
         
-        if (wp_remote_retrieve_response_code($response) !== 200) {
-            error_log('Web2Print Flask Analysis HTTP Error: ' . wp_remote_retrieve_response_code($response));
+        // PRIORIDADE 1: SUPORTE ASSÍNCRONO - TRATAR TANTO 200 (SYNC) QUANTO 202 (ASYNC)
+        if ($response_code === 200) {
+            // Processamento síncrono - resposta imediata
+            if (!$data['success']) {
+                error_log('Web2Print Flask Analysis API Error: ' . $data['error']);
+                return false;
+            }
+            error_log('Web2Print: Análise síncrona concluída em ' . $data['data']['processing_time_seconds'] . 's');
+            return $data['data'];
+            
+        } elseif ($response_code === 202) {
+            // Processamento assíncrono - fazer polling
+            if (!isset($data['job_id'])) {
+                error_log('Web2Print: Resposta 202 sem job_id');
+                return false;
+            }
+            
+            $job_id = $data['job_id'];
+            $estimated_time = isset($data['estimated_time_seconds']) ? $data['estimated_time_seconds'] : 60;
+            
+            error_log(sprintf('Web2Print: Análise assíncrona iniciada - Job: %s, ETA: %ds', $job_id, $estimated_time));
+            
+            // Fazer polling até conclusão
+            return $this->poll_job_until_completion($job_id, $estimated_time);
+            
+        } else {
+            error_log('Web2Print Flask Analysis HTTP Error: ' . $response_code);
             error_log('Response body: ' . $body);
-            return false;
-        }
-        
-        if (!$data['success']) {
-            error_log('Web2Print Flask Analysis API Error: ' . $data['error']);
             return false;
         }
         
         // Retornar dados da análise precisos do Flask
         return $data['data'];
+    }
+    
+    /**
+     * PRIORIDADE 1: POLLING PARA JOBS ASSÍNCRONOS
+     */
+    private function poll_job_until_completion($job_id, $estimated_time_seconds) {
+        $polling_url = rtrim($this->api_endpoint, '/') . '/jobs/' . $job_id;
+        
+        // Configuração de polling exponential backoff
+        $max_attempts = 30; // Máximo 30 tentativas
+        $initial_interval = 2; // Começar com 2 segundos
+        $max_interval = 10; // Máximo 10 segundos entre tentativas
+        $timeout_total = max($estimated_time_seconds + 30, 120); // Pelo menos 2 minutos total
+        
+        $start_time = time();
+        $interval = $initial_interval;
+        
+        error_log(sprintf('Web2Print: Iniciando polling para job %s - Max %d tentativas, timeout %ds', 
+            $job_id, $max_attempts, $timeout_total));
+        
+        for ($attempt = 1; $attempt <= $max_attempts; $attempt++) {
+            // Verificar timeout total
+            if (time() - $start_time > $timeout_total) {
+                error_log(sprintf('Web2Print: Timeout total atingido para job %s após %ds', 
+                    $job_id, time() - $start_time));
+                return false;
+            }
+            
+            // Fazer requisição de polling
+            $response = wp_remote_get($polling_url, array(
+                'timeout' => 10,
+                'headers' => array(
+                    'X-API-Key' => $this->api_key,
+                    'User-Agent' => 'Web2Print-Polling/1.0'
+                )
+            ));
+            
+            if (is_wp_error($response)) {
+                error_log(sprintf('Web2Print: Erro no polling (tentativa %d): %s', 
+                    $attempt, $response->get_error_message()));
+                
+                // Aguardar antes de tentar novamente
+                sleep($interval);
+                $interval = min($interval * 1.5, $max_interval); // Exponential backoff
+                continue;
+            }
+            
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            $response_code = wp_remote_retrieve_response_code($response);
+            
+            if ($response_code === 404) {
+                error_log('Web2Print: Job não encontrado: ' . $job_id);
+                return false;
+            }
+            
+            if ($response_code === 410) {
+                error_log('Web2Print: Job expirado: ' . $job_id);
+                return false;
+            }
+            
+            if ($response_code !== 200) {
+                error_log(sprintf('Web2Print: Erro HTTP no polling: %d - %s', $response_code, $body));
+                sleep($interval);
+                continue;
+            }
+            
+            $status = isset($data['status']) ? $data['status'] : 'unknown';
+            $progress = isset($data['progress']) ? $data['progress'] : 0;
+            
+            error_log(sprintf('Web2Print: Job %s - Status: %s, Progresso: %d%% (tentativa %d)', 
+                $job_id, $status, $progress, $attempt));
+            
+            if ($status === 'completed') {
+                // Job concluído com sucesso
+                if (isset($data['data'])) {
+                    $processing_time = time() - $start_time;
+                    error_log(sprintf('Web2Print: Job %s CONCLUÍDO em %ds total', $job_id, $processing_time));
+                    return $data['data'];
+                } else {
+                    error_log('Web2Print: Job completed sem dados de resultado');
+                    return false;
+                }
+                
+            } elseif ($status === 'failed') {
+                // Job falhou
+                $error = isset($data['error']) ? $data['error'] : 'Erro desconhecido';
+                error_log('Web2Print: Job falhou: ' . $error);
+                return false;
+                
+            } elseif ($status === 'pending' || $status === 'running') {
+                // Job ainda em processamento, continuar polling
+                sleep($interval);
+                
+                // Ajustar intervalo baseado no progresso
+                if ($progress > 50) {
+                    $interval = min($interval, 3); // Mais frequente quando próximo da conclusão
+                } else {
+                    $interval = min($interval * 1.2, $max_interval); // Menos frequente no início
+                }
+                continue;
+                
+            } else {
+                error_log('Web2Print: Status de job desconhecido: ' . $status);
+                sleep($interval);
+                continue;
+            }
+        }
+        
+        error_log(sprintf('Web2Print: Polling esgotado para job %s após %d tentativas', 
+            $job_id, $max_attempts));
+        return false;
     }
     
     private function count_pdf_pages($pdf_content) {
