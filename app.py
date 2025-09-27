@@ -6,6 +6,11 @@ import os
 import requests
 import uuid
 import hashlib
+import tempfile
+import contextlib
+import logging
+import time
+from datetime import datetime
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -14,6 +19,178 @@ from flask_wtf.csrf import CSRFProtect
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# ============================================
+# CONFIGURAÇÕES DE OTIMIZAÇÃO - FASE 1
+# ============================================
+
+# Configurações específicas para ambiente Replit e performance
+MAX_PDF_SIZE_SYNC = int(os.getenv('MAX_SYNC_PDF_SIZE', '10485760'))  # 10MB default
+MAX_PDF_SIZE_TOTAL = int(os.getenv('MAX_PDF_SIZE_TOTAL', '52428800'))  # 50MB total
+HEALTH_CHECK_TIMEOUT = int(os.getenv('HEALTH_CHECK_TIMEOUT', '3'))  # 3 segundos
+PDF_DOWNLOAD_TIMEOUT = int(os.getenv('PDF_DOWNLOAD_TIMEOUT', '30'))  # 30 segundos
+CLEANUP_LOG_LEVEL = os.getenv('CLEANUP_LOG_LEVEL', 'INFO').upper()
+ENABLE_SIZE_PRECHECK = os.getenv('ENABLE_SIZE_PRECHECK', 'true').lower() == 'true'
+
+# Configurar logging estruturado
+logging.basicConfig(
+    level=getattr(logging, CLEANUP_LOG_LEVEL, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('web2print')
+
+# ============================================
+# CONTEXT MANAGER PARA ARQUIVOS TEMPORÁRIOS
+# ============================================
+
+@contextlib.contextmanager
+def secure_temp_pdf_file(suffix='.pdf', prefix='web2print_'):
+    """
+    Context manager robusto para arquivos PDF temporários com cleanup garantido.
+    
+    Features:
+    - Cleanup automático garantido via context manager
+    - Logging detalhado de operações
+    - Tratamento de erro robusto
+    - Geração de nomes únicos com timestamp
+    """
+    temp_path = None
+    start_time = time.time()
+    
+    try:
+        # Criar arquivo temporário com nome único
+        timestamp = int(time.time() * 1000)  # milliseconds
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix, 
+            prefix=f"{prefix}{timestamp}_", 
+            delete=False
+        ) as temp_file:
+            temp_path = temp_file.name
+            
+        logger.info(f"Arquivo temporário criado: {temp_path}")
+        yield temp_path
+        
+    except Exception as e:
+        logger.error(f"Erro durante uso do arquivo temporário {temp_path}: {e}")
+        raise
+        
+    finally:
+        # CRÍTICO: Cleanup garantido independente de sucesso/erro
+        cleanup_duration = time.time() - start_time
+        
+        if temp_path and os.path.exists(temp_path):
+            try:
+                file_size = os.path.getsize(temp_path)
+                os.remove(temp_path)
+                logger.info(
+                    f"Arquivo temporário removido com sucesso: {temp_path} "
+                    f"(tamanho: {file_size:,} bytes, duração: {cleanup_duration:.2f}s)"
+                )
+            except OSError as cleanup_error:
+                logger.error(
+                    f"FALHA CRÍTICA: Não foi possível remover arquivo temporário {temp_path}: {cleanup_error}"
+                )
+                # Em produção: alertar admin ou adicionar a lista de cleanup
+                # TODO: Implementar sistema de cleanup de emergência
+        elif temp_path:
+            logger.warning(f"Arquivo temporário não encontrado para cleanup: {temp_path}")
+        else:
+            logger.debug("Nenhum arquivo temporário para cleanup")
+
+# ============================================
+# FUNÇÕES DE VERIFICAÇÃO DE TAMANHO
+# ============================================
+
+def check_pdf_size_before_download(url, max_size=None):
+    """
+    Verifica o tamanho do PDF antes do download para otimizar performance.
+    
+    Args:
+        url: URL do PDF para verificar
+        max_size: Tamanho máximo permitido em bytes
+        
+    Returns:
+        dict: {'allowed': bool, 'size': int, 'message': str}
+    """
+    if not ENABLE_SIZE_PRECHECK:
+        return {'allowed': True, 'size': 0, 'message': 'Pré-verificação desabilitada'}
+        
+    max_size = max_size or MAX_PDF_SIZE_TOTAL
+    
+    try:
+        logger.info(f"Verificando tamanho do PDF: {url}")
+        head_response = requests.head(url, timeout=5, allow_redirects=True)
+        head_response.raise_for_status()
+        
+        content_length = head_response.headers.get('content-length')
+        if not content_length:
+            logger.warning(f"Content-Length não disponível para {url}")
+            return {'allowed': True, 'size': 0, 'message': 'Tamanho não determinável'}
+            
+        file_size = int(content_length)
+        
+        if file_size > max_size:
+            logger.warning(f"Arquivo muito grande: {file_size:,} bytes (máx: {max_size:,})")
+            return {
+                'allowed': False, 
+                'size': file_size,
+                'message': f'Arquivo muito grande: {file_size/1024/1024:.1f}MB (máx: {max_size/1024/1024:.1f}MB)'
+            }
+            
+        logger.info(f"Tamanho do arquivo OK: {file_size:,} bytes")
+        return {'allowed': True, 'size': file_size, 'message': 'Tamanho aprovado'}
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Erro ao verificar tamanho do PDF {url}: {e}")
+        # Em caso de erro, permitir download (pode ser problema temporário)
+        return {'allowed': True, 'size': 0, 'message': f'Erro na verificação: {e}'}
+
+def get_processing_strategy(file_size):
+    """
+    Determina a estratégia de processamento baseada no tamanho do arquivo.
+    
+    Args:
+        file_size: Tamanho do arquivo em bytes
+        
+    Returns:
+        dict: {'strategy': str, 'timeout': int, 'message': str}
+    """
+    if file_size <= MAX_PDF_SIZE_SYNC:
+        return {
+            'strategy': 'sync',
+            'timeout': 15,
+            'message': 'Processamento rápido síncrono'
+        }
+    else:
+        return {
+            'strategy': 'sync_slow',
+            'timeout': 45,
+            'message': 'Processamento síncrono estendido (arquivo grande)'
+        }
+
+# ============================================
+# FUNÇÕES DE MONITORING MELHORADAS
+# ============================================
+
+def log_api_performance(operation, duration, file_size=None, success=True):
+    """
+    Log estruturado de performance para monitoramento.
+    """
+    log_data = {
+        'operation': operation,
+        'duration_seconds': round(duration, 3),
+        'success': success,
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    if file_size:
+        log_data['file_size_bytes'] = file_size
+        log_data['processing_rate_mb_per_sec'] = round((file_size / 1024 / 1024) / duration, 2)
+    
+    if success:
+        logger.info(f"Performance: {log_data}")
+    else:
+        logger.warning(f"Performance (failed): {log_data}")
 
 # SEGURANÇA: Configuração de chave secreta e sessões
 secret_key = os.getenv('SECRET_KEY', 'web2print-secret-key-2024-replit-env')
@@ -34,6 +211,15 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 1800  # 30 minutos
 db = SQLAlchemy(app)
 csrf = CSRFProtect(app)  # Proteção CSRF
 app.app_context().push()
+
+# Log de inicialização com configurações
+logger.info(f"Web2Print iniciado com configurações:")
+logger.info(f"  - MAX_PDF_SIZE_SYNC: {MAX_PDF_SIZE_SYNC/1024/1024:.1f}MB")
+logger.info(f"  - MAX_PDF_SIZE_TOTAL: {MAX_PDF_SIZE_TOTAL/1024/1024:.1f}MB")
+logger.info(f"  - HEALTH_CHECK_TIMEOUT: {HEALTH_CHECK_TIMEOUT}s")
+logger.info(f"  - ENABLE_SIZE_PRECHECK: {ENABLE_SIZE_PRECHECK}")
+logger.info(f"  - Ambiente: {'Produção' if is_production else 'Desenvolvimento'}")
+logger.info(f"  - Log Level: {CLEANUP_LOG_LEVEL}")
 
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -1414,47 +1600,67 @@ def api_analyze_pdf_url():
                 'error_code': 'DOWNLOAD_ERROR'
             }), 400
         
-        # Salvar temporariamente para análise
-        import tempfile
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-                # CRÍTICO: Baixar conteúdo com limite rigoroso de tamanho
-                downloaded = 0
+        # FASE 1: VERIFICAÇÃO OTIMIZADA DE TAMANHO
+        operation_start = time.time()
+        
+        # Verificar tamanho antes do download (otimização)
+        size_check = check_pdf_size_before_download(pdf_url, MAX_PDF_SIZE_TOTAL)
+        if not size_check['allowed']:
+            logger.warning(f"Download bloqueado por tamanho: {size_check['message']}")
+            return jsonify({
+                'success': False,
+                'error': size_check['message'],
+                'error_code': 'FILE_TOO_LARGE_PRECHECK'
+            }), 400
+            
+        # Determinar estratégia de processamento
+        strategy = get_processing_strategy(size_check['size'])
+        logger.info(f"Estratégia de processamento: {strategy['message']}")
+        
+        # PROCESSAMENTO COM CONTEXT MANAGER ROBUSTO
+        with secure_temp_pdf_file() as temp_path:
+            download_start = time.time()
+            
+            # Download com cleanup automático garantido
+            downloaded = 0
+            with open(temp_path, 'wb') as temp_file:
                 for chunk in response.iter_content(chunk_size=64*1024):  # 64KB chunks
                     if chunk:
                         downloaded += len(chunk)
-                        if downloaded > max_size:
-                            # CRÍTICO: Limpar arquivo parcial antes de retornar erro
-                            try:
-                                os.remove(temp_file.name)
-                            except:
-                                pass
+                        if downloaded > MAX_PDF_SIZE_TOTAL:
+                            logger.error(f"Download excedeu limite: {downloaded:,} bytes")
                             return jsonify({
                                 'success': False,
                                 'error': 'Arquivo excedeu limite durante download',
                                 'error_code': 'DOWNLOAD_SIZE_EXCEEDED'
                             }), 400
                         temp_file.write(chunk)
-                temp_path = temp_file.name
             
-            print(f"[INFO] PDF salvo temporariamente: {temp_path}")
+            download_duration = time.time() - download_start
+            logger.info(f"Download concluído: {downloaded:,} bytes em {download_duration:.2f}s")
             
-            # ANÁLISE COM PyMuPDF (se disponível) ou fallback
+            # ANÁLISE COM LOGGING DETALHADO
+            analysis_start = time.time()
+            
             try:
                 # Verificar se PyMuPDF está disponível
-                import fitz
+                try:
+                    import fitz
+                except ImportError:
+                    logger.warning("PyMuPDF não encontrado, importando dinamicamente...")
+                    import fitz
+                    
                 color_stats = analyze_pdf_colors(temp_path)
                 analysis_method = 'PyMuPDF_precise'
-                print(f"[INFO] Análise PyMuPDF concluída: {color_stats}")
+                logger.info(f"Análise PyMuPDF concluída: {color_stats}")
+                
             except ImportError:
                 # Fallback para análise básica se PyMuPDF não disponível
-                print("[WARNING] PyMuPDF não disponível, usando análise básica")
+                logger.warning("PyMuPDF não disponível, usando fallback PyPDF2")
                 with open(temp_path, 'rb') as pdf_file:
-                    import PyPDF2
                     pdf_reader = PyPDF2.PdfReader(pdf_file)
                     total_pages = len(pdf_reader.pages)
-                    # Assumir 30% colorido como estimativa conservadora
+                    # Estimativa conservadora: 30% colorido
                     color_pages = max(1, int(total_pages * 0.3))
                     mono_pages = total_pages - color_pages
                     
@@ -1466,7 +1672,26 @@ def api_analyze_pdf_url():
                 }
                 analysis_method = 'PyPDF2_estimate'
             
-            # Retornar dados de análise
+            analysis_duration = time.time() - analysis_start
+            total_duration = time.time() - operation_start
+            
+            # Log de performance estruturado
+            log_api_performance(
+                operation='pdf_analysis_url',
+                duration=total_duration,
+                file_size=downloaded,
+                success=True
+            )
+            
+            logger.info(
+                f"Análise completa - Método: {analysis_method}, "
+                f"Arquivo: {downloaded/1024:.1f}KB, "
+                f"Download: {download_duration:.2f}s, "
+                f"Análise: {analysis_duration:.2f}s, "
+                f"Total: {total_duration:.2f}s"
+            )
+            
+            # Retornar dados de análise com metadados de performance
             return jsonify({
                 'success': True,
                 'data': {
@@ -1474,19 +1699,14 @@ def api_analyze_pdf_url():
                     'color_pages': color_stats['color_pages'], 
                     'mono_pages': color_stats['mono_pages'],
                     'color_type': color_stats['color_type'],
-                    'analysis_method': analysis_method
+                    'analysis_method': analysis_method,
+                    'file_size_bytes': downloaded,
+                    'processing_time_seconds': round(total_duration, 2)
                 },
-                'message': f'PDF analisado com sucesso via {analysis_method}'
+                'message': f'PDF analisado com sucesso via {analysis_method} em {total_duration:.1f}s'
             }), 200
             
-        finally:
-            # CRÍTICO: SEMPRE limpar arquivo temporário
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                    print(f"[INFO] Arquivo temporário removido: {temp_path}")
-                except Exception as cleanup_error:
-                    print(f"[WARNING] Erro ao limpar temp file: {cleanup_error}")
+            # Context manager garante cleanup automático
     
     except Exception as e:
         print(f"[ERROR] Erro na análise PDF via URL: {str(e)}")
