@@ -1440,6 +1440,7 @@ def api_health():
         }), 500
 
 @app.route('/api/v1/analyze_pdf_url', methods=['POST', 'OPTIONS'])
+@csrf.exempt
 def api_analyze_pdf_url():
     """
     Endpoint para análise de PDF via URL - WordPress Plugin Integration
@@ -1559,9 +1560,21 @@ def api_analyze_pdf_url():
         
         # Baixar PDF temporariamente via requests
         try:
-            print(f"[INFO] Baixando PDF de: {pdf_url}")
+            logger.info(f"Iniciando download seguro de PDF: {pdf_url}")
+            
+            # FASE 1: DOWNLOAD SEGURO COM TIMEOUT OTIMIZADO
+            # Usar timeout duplo: (connect_timeout, read_timeout) para maior controle
+            connect_timeout = 5  # Conectar rápido
+            read_timeout = PDF_DOWNLOAD_TIMEOUT  # Leitura baseada na configuração
+            
             # SEGURANÇA: Bloquear redirects para prevenir SSRF via redirect  
-            response = requests.get(pdf_url, timeout=30, stream=True, allow_redirects=False)
+            response = requests.get(
+                pdf_url, 
+                timeout=(connect_timeout, read_timeout), 
+                stream=True, 
+                allow_redirects=False,
+                headers={'User-Agent': 'Web2Print-Downloader/1.0'}
+            )
             
             # Verificar se é redirect
             if response.status_code in (301, 302, 303, 307, 308):
@@ -1593,12 +1606,12 @@ def api_analyze_pdf_url():
                 }), 400
             
         except requests.exceptions.RequestException as e:
-            print(f"[ERROR] Falha ao baixar PDF: {str(e)}")
+            logger.error(f"Falha na requisição HTTP para PDF: {str(e)}")
             return jsonify({
                 'success': False,
-                'error': f'Erro ao baixar arquivo: {str(e)}',
-                'error_code': 'DOWNLOAD_ERROR'
-            }), 400
+                'error': f'Erro ao conectar ou iniciar download: {str(e)}',
+                'error_code': 'HTTP_REQUEST_FAILED'
+            }), 422
         
         # FASE 1: VERIFICAÇÃO OTIMIZADA DE TAMANHO
         operation_start = time.time()
@@ -1619,22 +1632,62 @@ def api_analyze_pdf_url():
         
         # PROCESSAMENTO COM CONTEXT MANAGER ROBUSTO
         with secure_temp_pdf_file() as temp_path:
+            # DOWNLOAD SEGURO COM LIMITE RÍGIDO DE BYTES
+            downloaded = 0
+            chunk_count = 0
             download_start = time.time()
             
-            # Download com cleanup automático garantido
-            downloaded = 0
+            # Obter Content-Length se disponível para melhor logging
+            expected_size = response.headers.get('content-length')
+            if expected_size:
+                expected_size = int(expected_size)
+                logger.info(f"Tamanho esperado: {expected_size:,} bytes ({expected_size/1024/1024:.1f}MB)")
+            else:
+                logger.warning("Content-Length não disponível - aplicando limite cumulativo rígido")
+                expected_size = None
+            
             with open(temp_path, 'wb') as temp_file:
-                for chunk in response.iter_content(chunk_size=64*1024):  # 64KB chunks
-                    if chunk:
-                        downloaded += len(chunk)
-                        if downloaded > MAX_PDF_SIZE_TOTAL:
-                            logger.error(f"Download excedeu limite: {downloaded:,} bytes")
-                            return jsonify({
-                                'success': False,
-                                'error': 'Arquivo excedeu limite durante download',
-                                'error_code': 'DOWNLOAD_SIZE_EXCEEDED'
-                            }), 400
-                        temp_file.write(chunk)
+                try:
+                    for chunk in response.iter_content(chunk_size=64*1024):  # 64KB chunks
+                        if chunk:
+                            chunk_count += 1
+                            downloaded += len(chunk)
+                            
+                            # LIMITE RÍGIDO: Parar imediatamente se exceder limite
+                            if downloaded > MAX_PDF_SIZE_TOTAL:
+                                elapsed = time.time() - download_start
+                                logger.error(
+                                    f"Download abortado por exceder limite: {downloaded:,} bytes "
+                                    f"(máx: {MAX_PDF_SIZE_TOTAL:,}) em {elapsed:.2f}s, {chunk_count} chunks"
+                                )
+                                return jsonify({
+                                    'success': False,
+                                    'error': f'Arquivo muito grande para download: {downloaded/1024/1024:.1f}MB (máximo permitido: {MAX_PDF_SIZE_TOTAL/1024/1024:.1f}MB)',
+                                    'error_code': 'PAYLOAD_TOO_LARGE',
+                                    'downloaded_bytes': downloaded,
+                                    'max_bytes': MAX_PDF_SIZE_TOTAL
+                                }), 413  # Payload Too Large
+                            
+                            temp_file.write(chunk)
+                            
+                            # Log de progresso para arquivos grandes (a cada 10MB)
+                            if downloaded % (10 * 1024 * 1024) == 0 or (downloaded > 0 and chunk_count % 100 == 0):
+                                elapsed = time.time() - download_start
+                                speed_mbps = (downloaded / (1024 * 1024)) / max(elapsed, 0.1)
+                                logger.debug(f"Download em progresso: {downloaded/1024/1024:.1f}MB ({speed_mbps:.1f}MB/s)")
+                                
+                except requests.exceptions.RequestException as download_error:
+                    elapsed = time.time() - download_start
+                    logger.error(
+                        f"Erro durante download: {download_error} - "
+                        f"Baixados: {downloaded:,} bytes em {elapsed:.2f}s"
+                    )
+                    return jsonify({
+                        'success': False,
+                        'error': 'Falha durante download do arquivo PDF',
+                        'error_code': 'DOWNLOAD_FAILED',
+                        'details': str(download_error)
+                    }), 422  # Unprocessable Entity
             
             download_duration = time.time() - download_start
             logger.info(f"Download concluído: {downloaded:,} bytes em {download_duration:.2f}s")
