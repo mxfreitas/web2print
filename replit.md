@@ -1,6 +1,6 @@
 # Overview
 
-Web2Print is a Flask-based web application for managing print services. Users can register, upload PDF files, and get automated cost estimates based on color analysis. The system analyzes PDFs to detect color vs monochrome pages and provides detailed pricing for different print configurations including paper types, binding options, and finishing services.
+Web2Print is a Flask-based web application designed to streamline print service management. It enables users to upload PDF files, receive automated cost estimates based on color analysis, and configure detailed print options. The system supports various print configurations, including paper types, binding, and finishing services, aiming to provide accurate pricing and enhance the print ordering process.
 
 # User Preferences
 
@@ -8,186 +8,46 @@ Preferred communication style: Simple, everyday language.
 
 # System Architecture
 
-## Frontend Architecture
-- **Template Engine**: Jinja2 templates with Flask
-- **Styling**: Bootstrap 4.5.2 for responsive UI components
-- **JavaScript**: Vanilla JavaScript for file upload handling and form interactions
-- **Static Assets**: CSS organized in separate files with custom styling for print configuration forms
+## UI/UX Decisions
+-   **Frontend**: Jinja2 templates with Flask, utilizing Bootstrap 4.5.2 for responsive design and vanilla JavaScript for dynamic interactions.
+-   **Styling**: Custom CSS for print configuration forms, with static assets organized logically.
 
-## Backend Architecture
-- **Web Framework**: Flask with modular route handling
-- **Database ORM**: SQLAlchemy for database operations
-- **File Processing**: PyPDF2 and PyMuPDF (fitz) for PDF analysis and color detection
-- **Session Management**: Flask sessions with configurable timeouts and security settings
-- **File Upload**: Werkzeug secure filename handling
+## Technical Implementations
+-   **Backend Framework**: Flask, featuring modular route handling and secure session management.
+-   **Database ORM**: SQLAlchemy for robust interaction with a SQLite database, managing user data, file metadata, and order configurations.
+-   **PDF Processing**: Advanced color detection and page counting using PyMuPDF (fitz) and PyPDF2.
+-   **File Management**: Secure file uploads using Werkzeug, with local file system storage for PDFs.
+-   **Authentication**: CPF-based user login with comprehensive validation and CSRF protection.
+-   **Cost Estimation**: Dynamic pricing logic based on PDF analysis, selected print options (color, monochrome, mixed), paper types, binding, finishing, and quantity.
 
-## Data Storage
-- **Primary Database**: SQLite for user data, file metadata, and order configurations
-- **User Model**: Comprehensive schema including personal info, file details, color analysis results, and print configuration options
-- **File Storage**: Local file system for uploaded PDFs with secure filename generation
+## Feature Specifications
+-   **Print Configuration**: Offers extensive options for print types, diverse paper choices (sulfite, couche, recycled with various weights), binding services (spiral, wire-o, hardcover, stapling), and finishing options (lamination, varnish, folding).
+-   **Quantity Management**: Includes calculations for bulk pricing based on copy quantity.
 
-## Authentication & Authorization
-- **User Authentication**: CPF-based login system
-- **Session Security**: HTTP-only cookies with CSRF protection
-- **User Registration**: Name, CPF, and address validation with CEP integration
-
-## PDF Processing System
-- **Color Analysis**: Automated detection of color vs monochrome pages using PyMuPDF
-- **Page Counting**: Extraction of total page count from uploaded PDFs
-- **Cost Estimation**: Dynamic pricing based on color analysis, paper type, binding options, and quantity
-
-## Print Configuration Features
-- **Print Types**: Color, monochrome, and mixed printing options
-- **Paper Options**: Multiple paper types (sulfite, couche, recycled) with various weights
-- **Binding Services**: Spiral, wire-o, hardcover, and stapling options
-- **Finishing Options**: Lamination, varnish, folding services
-- **Quantity Management**: Copy quantity with bulk pricing calculations
+## System Design Choices
+-   **Centralized PDF Analysis**: A dedicated Flask API endpoint (`/api/v1/analyze_pdf_url`) centralizes PDF processing, leveraging PyMuPDF for high-precision color detection and offering robust security features like SSRF protection and API key authentication. This ensures consistent and secure analysis across integrations.
+-   **Multi-layer File Validation**: Comprehensive validation for PDF uploads, including client-side JavaScript checks, server-side WordPress validation (magic bytes, MIME type, integrity), and HTML template `accept` attributes, to ensure only valid PDFs are processed.
+-   **Performance Optimizations**: Implemented a context manager for guaranteed temporary file cleanup, advanced logging for performance tracking, pre-download size verification using HEAD requests, and optimized timeouts for various operations, particularly for the Replit environment.
+-   **Production-Ready Integrations**: Designed for seamless integration with WordPress/WooCommerce, including dedicated API endpoints for cost calculation (`/api/v1/calculate_final`), a WordPress plugin for PDF upload and real-time calculation, and robust metadata storage for print shop operations.
 
 # External Dependencies
 
 ## Python Libraries
-- **Flask**: Web framework for HTTP handling and routing
-- **Flask-SQLAlchemy**: Database ORM for user and order management
-- **PyPDF2**: PDF parsing and page extraction
-- **PyMuPDF (fitz)**: Advanced PDF color analysis and content processing
-- **Werkzeug**: Secure file upload handling
-- **requests**: HTTP client for external API integrations (CEP validation)
+-   **Flask**: Web framework.
+-   **Flask-SQLAlchemy**: ORM for database interactions.
+-   **PyPDF2**: PDF parsing.
+-   **PyMuPDF (fitz)**: Advanced PDF analysis and color detection.
+-   **Werkzeug**: Secure file handling.
+-   **requests**: HTTP client for API integrations.
 
 ## Frontend Libraries
-- **Bootstrap 4.5.2**: CSS framework via CDN for responsive design
-- **jQuery 3.5.1**: JavaScript library for DOM manipulation (via CDN)
-- **Popper.js**: Tooltip and popover positioning (via CDN)
+-   **Bootstrap 4.5.2**: Responsive CSS framework (via CDN).
+-   **jQuery 3.5.1**: JavaScript library (via CDN).
+-   **Popper.js**: Tooltip and popover positioning (via CDN).
 
 ## External APIs
-- **CEP Validation Service**: Integration for Brazilian postal code validation during user registration
+-   **CEP Validation Service**: For Brazilian postal code validation.
 
-## File System Dependencies
-- **Upload Directory**: Local storage for PDF files with secure naming
-- **Static Assets**: CSS, JavaScript, and image files served via Flask static routing
-
-# Recent Changes & Updates
-
-## September 26, 2025 - WooCommerce API Integration
-- **New API Endpoints**: Implemented dedicated REST API endpoints for WooCommerce integration
-  - `/api/v1/calculate_final`: Main endpoint for cost calculations with JSON request/response
-  - `/api/v1/health`: Health check endpoint for API monitoring
-- **Security Features**: Comprehensive input validation, CORS support, structured error handling
-- **Integration Ready**: Full compatibility with WooCommerce REST API ecosystem and webhooks
-- **Production Quality**: Robust error handling, logging, and structured JSON responses
-
-## API Integration Features
-- **Input Validation**: Complete validation of color_pages, mono_pages, paper types, weights, binding, and finishing options
-- **CORS Support**: Cross-origin resource sharing configured for WooCommerce domains
-- **Error Handling**: Structured error responses with specific error codes for debugging
-- **Fallback Logic**: Intelligent defaults and closest-match algorithms for invalid inputs
-- **Logging System**: Detailed request/response logging for integration monitoring and debugging
-
-## WooCommerce Compatibility
-- **JSON Request/Response**: Clean API interface following REST best practices
-- **Flexible Parameters**: Support for optional parameters with intelligent defaults
-- **Cost Breakdown**: Detailed cost structure including pages, binding, finishing, and total costs
-- **Business Logic**: Direct integration with existing `calculate_advanced_cost` function using database-driven pricing
-
-## September 26, 2025 - WordPress Plugin Integration
-- **Complete Plugin**: Full WordPress plugin created for WooCommerce integration
-  - `wordpress-plugin/web2print-integration.php`: Main plugin file with PHP logic
-  - `wordpress-plugin/js/web2print-ajax.js`: JavaScript for AJAX and user interface
-  - `wordpress-plugin/templates/calculator-form.php`: HTML template for PDF calculator
-  - `wordpress-plugin/css/web2print-style.css`: Responsive CSS styling
-- **Plugin Features**: PDF upload with drag & drop, real-time cost calculation, WooCommerce cart integration
-- **WordPress Hooks**: Implemented `woocommerce_before_calculate_totals` and `woocommerce_add_to_cart` for seamless integration
-- **Admin Interface**: Configuration page for API endpoint and authentication key management
-- **Production Ready**: Complete plugin ready for installation and deployment in WordPress/WooCommerce stores
-
-## September 26, 2025 - MAJOR ARCHITECTURAL OPTIMIZATION: Centralized PDF Analysis
-- **New Flask API Route**: `/api/v1/analyze_pdf_url` endpoint for centralized PDF analysis via URL
-  - **PyMuPDF Integration**: High-precision color detection using advanced PDF processing library
-  - **Intelligent Fallback**: Automatic fallback to PyPDF2 if PyMuPDF unavailable, with method tracking
-  - **Production Security**: Comprehensive SSRF protection, API key authentication, file validation
-- **WordPress Integration Optimization**: Plugin modified to send PDF URLs to Flask instead of local analysis
-  - **analyze_pdf_via_flask()**: New method for secure API communication with Flask backend
-  - **Session Management**: Complete analysis data persistence in WooCommerce session for validation
-  - **File Workflow**: Maintains permanent PDF storage for print shop access while leveraging Flask precision
-- **Security Hardening**: Production-ready security implementations
-  - **SSRF Protection**: IPv4/IPv6 validation, private IP blocking, redirect prevention
-  - **API Authentication**: Mandatory API key with production environment validation
-  - **Content Validation**: Strict Content-Type checking and file size limits (50MB)
-  - **Resource Management**: Guaranteed temporary file cleanup and stream-based downloads
-- **System Benefits**:
-  - **Accuracy**: PyMuPDF provides superior color detection compared to regex-based analysis
-  - **Centralization**: Single source of truth for PDF analysis logic in Flask backend
-  - **Security**: Enterprise-grade security protections for production deployment
-  - **Maintainability**: Centralized analysis logic reduces code duplication between systems
-
-## September 26, 2025 - Enhanced PDF URL Metadata Management for Print Shop Access
-- **Robust URL Validation**: Comprehensive validation of PDF URLs before saving to WooCommerce order metadata
-  - **Accessibility Testing**: Real-time URL verification via wp_remote_head with timeout controls
-  - **Status Tracking**: Detailed metadata including verification status, check timestamps, and validity flags
-  - **Error Handling**: Graceful handling of invalid URLs with debugging information preserved
-- **Comprehensive Metadata Storage**: Complete PDF file information saved as order item metadata
-  - **Essential Data**: URL, filename, filesize, local path fallback, content hash, verification token
-  - **Technical Metadata**: Analysis method, upload timestamp, verification status for debugging
-  - **Print Shop Access**: Direct download links and formatted display for easy print shop workflow
-- **Detailed Logging System**: Full audit trail of PDF URL handling throughout the order process
-  - **Session to Cart**: Logs during data transfer from session to cart items
-  - **Cart to Order**: Detailed logging during order creation with URL validation results
-  - **Debugging Support**: Hash and token truncation for security while maintaining troubleshooting capability
-- **Integration Hook**: WordPress action 'web2print_order_item_saved' for external system integration
-  - **Data Payload**: Complete PDF metadata with order/item IDs for third-party systems
-  - **Print Shop Integration**: Enables automatic notification of graphic shops when orders are placed
-  - **ERP Connectivity**: Facilitates integration with external workflow and production management systems
-- **Production Benefits**:
-  - **Reliability**: Multiple fallback mechanisms ensure print shop always has access to PDF files
-  - **Traceability**: Complete audit trail from upload through order completion
-  - **Integration Ready**: Designed for seamless connection with external printing workflow systems
-  - **Security Compliant**: Sensitive data protection while maintaining operational transparency
-
-## September 26, 2025 - Robust PDF File Validation System
-- **Multi-Layer Validation**: Comprehensive PDF file validation preventing invalid uploads before Flask processing
-  - **Client-side JavaScript**: Extension (.pdf), MIME type (application/pdf), file size (1KB-50MB) validation
-  - **Server-side WordPress**: Magic bytes check (%PDF), wp_check_filetype_and_ext, file integrity validation
-  - **HTML Template**: Enhanced accept attribute (.pdf,application/pdf) for better browser filtering
-- **Consistent Error Messaging**: Unified user experience with clear, specific error messages
-  - **Standard Message**: "Formato inválido. Apenas PDFs são aceitos." for format errors
-  - **Size Validation**: "Arquivo muito grande. Máximo 50MB." for oversized files
-  - **Server Integration**: Error messages from WordPress server displayed in JavaScript UI
-- **Enhanced Error Handling**: Improved AJAX error processing with server message parsing
-  - **Response Parsing**: Intelligent parsing of server JSON responses for specific error messages
-  - **Fallback Messaging**: Graceful fallback to localized error texts when parsing fails
-  - **User Experience**: Clear feedback for all upload and validation scenarios
-- **Security Features**: Multi-level protection against invalid file uploads
-  - **Magic Bytes Verification**: Server-side check for PDF signature (%PDF) to prevent spoofed files
-  - **File Integrity Check**: Basic file opening and reading validation to detect corruption
-  - **Consistent Limits**: 50MB maximum size limit aligned between client and server validation
-- **System Benefits**:
-  - **User Experience**: Immediate feedback prevents unnecessary server requests for invalid files
-  - **Performance**: Client-side validation reduces server load and improves response times
-  - **Security**: Multiple validation layers prevent malicious or corrupted file uploads
-  - **Reliability**: Consistent validation ensures only valid PDFs reach Flask analysis system
-
-## September 26, 2025 - Production-Ready Order Details Display for Print Shop Operations
-- **Complete Admin Panel Integration**: Production-ready display of Web2Print order details in WooCommerce admin
-  - **Highlighted Production Info**: Dedicated section with clear formatting for print shop team access
-  - **Download Links**: Secure PDF download with nonce verification and permission checks
-  - **Analysis Details**: Complete page breakdown (total, color, monochrome) from Flask PyMuPDF analysis
-  - **Print Specifications**: Paper type, gramatura, binding, finishing options, and copy quantity
-- **Enterprise-Grade Security**: Multi-layer security implementation for production environments
-  - **Permission Validation**: edit_shop_orders capability and per-order authorization checks
-  - **Secure Downloads**: realpath containment, uploads directory restriction, MIME type validation
-  - **Anti-CSRF Protection**: Nonce verification tied to specific order items
-  - **Audit Logging**: Complete logs with order ID, user ID, IP address, and access decisions
-- **Production Display Features**: Visual design optimized for print shop workflow
-  - **CSS Styling**: Responsive design with highlighted sections and clear visual hierarchy
-  - **File Verification Status**: Visual indicators for PDF URL verification and accessibility
-  - **Mobile Responsive**: Optimized display for mobile devices and tablets
-  - **Print-Friendly**: CSS print styles for physical order processing workflows
-- **Technical Architecture**: Robust hooks and admin integration
-  - **WooCommerce Hooks**: woocommerce_admin_order_item_values for order display integration
-  - **Admin Styling**: Conditional CSS loading only on shop_order admin screens
-  - **Secure AJAX**: wp_ajax_web2print_download_pdf with comprehensive security validation
-  - **Fallback Systems**: Local file priority with URL fallback for maximum reliability
-- **Production Benefits**:
-  - **Workflow Efficiency**: All production data visible in single admin location
-  - **Security Compliance**: Enterprise-grade security for sensitive file access
-  - **Audit Trail**: Complete logging for production environment compliance
-  - **Zero Configuration**: Automatic display for orders containing Web2Print data
+## File System
+-   Local storage for uploaded PDF files.
+-   Static assets (CSS, JavaScript, images) served via Flask.
