@@ -1,7 +1,10 @@
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
-# PyMuPDF será importado dinamicamente quando necessário
+try:
+    import fitz  # PyMuPDF para análise de PDFs
+except ImportError:
+    import pymupdf as fitz  # Alternativa se PyMuPDF não importar corretamente
 import os
 import requests
 import uuid
@@ -2010,9 +2013,16 @@ def process_pdf_analysis_job(job):
         
         logger.error(f"Job {job.id} FALHOU: {str(e)}")
         
+        # Calcular duração se start_time estiver disponível no contexto da função
+        job_duration = 0
+        if 'operation_start' in locals():
+            job_duration = time.time() - operation_start
+        elif hasattr(job, 'started_at') and job.started_at:
+            job_duration = (datetime.now() - job.started_at).total_seconds()
+        
         log_api_performance(
             operation=f'pdf_analysis_async_{job.id}',
-            duration=time.time() - operation_start if 'operation_start' in locals() else 0,
+            duration=job_duration,
             file_size=0,
             success=False
         )
