@@ -1,10 +1,7 @@
 from flask import Flask, request, render_template, jsonify, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
-try:
-    import fitz  # PyMuPDF para análise de PDFs
-except ImportError:
-    import pymupdf as fitz  # Alternativa se PyMuPDF não importar corretamente
+import pymupdf as fitz  # PyMuPDF para análise de PDFs
 import os
 import requests
 import uuid
@@ -1940,11 +1937,8 @@ def process_pdf_analysis_job(job):
             analysis_start = time.time()
             
             try:
-                # Tentar PyMuPDF
-                try:
-                    import fitz
-                except ImportError:
-                    import fitz
+                # Usar PyMuPDF
+                import pymupdf as fitz
                     
                 color_stats = analyze_pdf_colors(temp_path)
                 analysis_method = 'PyMuPDF_precise'
