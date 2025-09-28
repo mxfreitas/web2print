@@ -1,0 +1,15 @@
+# WordPress Plugin specific
+node_modules/
+vendor/
+*.zip
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# OS files
+.DS_Store
+Thumbs.db
