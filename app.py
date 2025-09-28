@@ -2180,14 +2180,20 @@ def register():
             if not name or not cpf or not cep:
                 return render_template('register.html', error='Todos os campos são obrigatórios')
 
+            # Validar formato do CEP (apenas dígitos, 5 ou 8 dígitos, com ou sem hífen)
+            import re
+            cep_clean = re.sub(r'[^0-9]', '', cep)
+            if not re.match(r'^\d{8}$', cep_clean):
+                return render_template('register.html', error='CEP deve conter exatamente 8 dígitos')
+
             # Verificar se o CPF já existe
             existing_user = User.query.filter_by(cpf=cpf).first()
             if existing_user:
                 return render_template('register.html', error='CPF já cadastrado')
 
-            # Buscar endereço a partir do CEP
+            # Buscar endereço a partir do CEP (usando CEP validado)
             try:
-                response = requests.get(f'https://viacep.com.br/ws/{cep}/json/', timeout=10)
+                response = requests.get(f'https://viacep.com.br/ws/{cep_clean}/json/', timeout=10)
                 response.raise_for_status()
                 address_data = response.json()
             except requests.exceptions.RequestException:
