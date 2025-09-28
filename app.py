@@ -3,6 +3,10 @@ from flask_sqlalchemy import SQLAlchemy
 import PyPDF2
 import pymupdf as fitz  # PyMuPDF para análise de PDFs
 import os
+from dotenv import load_dotenv
+
+# Carregar variáveis do .env
+load_dotenv()
 import requests
 import uuid
 import hashlib
@@ -21,6 +25,14 @@ from flask_wtf.csrf import CSRFProtect
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Adicionar rota para servir uploads
+@app.route('/uploads/<path:filename>')
+def uploaded_file(filename):
+    import os
+    from flask import send_from_directory
+    upload_folder = os.path.join(os.getcwd(), 'uploads')
+    return send_from_directory(upload_folder, filename)
 
 # ============================================
 # CONFIGURAÇÕES DE OTIMIZAÇÃO - FASE 1
@@ -1085,7 +1097,7 @@ def validate_api_request(request):
     """Validar requisição API com key segura obrigatória"""
     # Verificar API key (obrigatória via environment)
     api_key = request.headers.get('X-API-Key')
-    expected_key = os.environ.get('API_KEY')
+    expected_key = os.environ.get('API_KEY') or os.environ.get('WEB2PRINT_API_KEY')
     
     if not expected_key:
         return False, 'API não configurada corretamente - contate o administrador'
@@ -1136,6 +1148,7 @@ def get_cors_origin(request):
     return None
 
 @app.route('/api/v1/calculate_final', methods=['POST', 'OPTIONS'])
+@csrf.exempt
 def api_calculate_final():
     """
     Endpoint dedicado para WooCommerce calcular custo final avançado
