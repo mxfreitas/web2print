@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Administrativo - Web2Print</title>
+    <style>
+        /* Reset básico para evitar conflitos */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .admin-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .admin-header {
+            background: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 20px 30px;
+            margin-bottom: 30px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            position: relative;
+            z-index: 10;
+        }
+        .admin-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .admin-nav h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .admin-nav .nav-links {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .admin-nav a {
+            color: #333;
+            text-decoration: none;
+            padding: 10px 18px;
+            border-radius: 8px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 1px solid rgba(102, 126, 234, 0.2);
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .admin-nav a:hover {
+            background: rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-left: 5px solid;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+        }
+        .stat-card.users { border-left-color: #007bff; }
+        .stat-card.uploads { border-left-color: #28a745; }
+        .stat-card.orders { border-left-color: #ffc107; }
+        .stat-card.revenue { border-left-color: #dc3545; }
+        
+        .stat-number {
+            font-size: 42px;
+            font-weight: 800;
+            color: #2c3e50;
+            margin: 15px 0;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .stat-label {
+            color: #5a6c7d;
+            font-size: 13px;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+        
+        .stat-icon {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 24px;
+            opacity: 0.3;
+        }
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .action-btn {
+            display: block;
+            padding: 15px;
+            background: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            text-align: center;
+            font-weight: bold;
+        }
+        .action-btn:hover {
+            background: #0056b3;
+            color: white;
+        }
+        .recent-section {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            margin-bottom: 30px;
+        }
+        .recent-section h3 {
+            margin: 0 0 20px 0;
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        .user-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .user-item:last-child {
+            border-bottom: none;
+        }
+        .user-info {
+            flex: 1;
+        }
+        .user-name {
+            font-weight: bold;
+            color: #333;
+        }
+        .user-details {
+            font-size: 12px;
+            color: #666;
+        }
+        .user-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-configured {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        .alert {
+            padding: 12px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        .alert-success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <div class="admin-header">
+            <div class="admin-nav">
+                <h1>🎛️ Dashboard Administrativo</h1>
+                <div class="nav-links">
+                    <a href="{{ url_for('admin_papers') }}">📄 Papéis</a>
+                    <a href="{{ url_for('admin_bindings') }}">📚 Encadernação</a>
+                    <a href="{{ url_for('admin_finishings') }}">✨ Acabamentos</a>
+                    <a href="{{ url_for('users') }}">👥 Usuários</a>
+                    <a href="{{ url_for('admin_logout') }}">🚪 Sair</a>
+                </div>
+            </div>
+        </div>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <!-- KPIs Principais -->
+        <div class="stats-grid">
+            <div class="stat-card users">
+                <div class="stat-icon">👥</div>
+                <div class="stat-label">Total de Usuários</div>
+                <div class="stat-number">{{ stats.total_users }}</div>
+                <small>Usuários cadastrados no sistema</small>
+            </div>
+            
+            <div class="stat-card uploads">
+                <div class="stat-icon">📤</div>
+                <div class="stat-label">Total de Uploads</div>
+                <div class="stat-number">{{ stats.total_uploads }}</div>
+                <small>Arquivos enviados</small>
+            </div>
+            
+            <div class="stat-card orders">
+                <div class="stat-icon">⚙️</div>
+                <div class="stat-label">Pedidos Configurados</div>
+                <div class="stat-number">{{ stats.total_orders }}</div>
+                <small>Taxa de conversão: {{ stats.conversion_rate }}%</small>
+            </div>
+            
+            <div class="stat-card revenue">
+                <div class="stat-icon">💰</div>
+                <div class="stat-label">Receita Total</div>
+                <div class="stat-number">R$ {{ stats.total_revenue }}</div>
+                <small>Ticket médio: R$ {{ stats.average_order }}</small>
+            </div>
+        </div>
+        
+        <!-- Ações Rápidas -->
+        <div class="quick-actions">
+            <a href="{{ url_for('admin_papers_create') }}" class="action-btn">
+                📄 Novo Tipo de Papel
+            </a>
+            <a href="{{ url_for('admin_bindings_create') }}" class="action-btn">
+                📚 Nova Encadernação
+            </a>
+            <a href="{{ url_for('admin_finishings_create') }}" class="action-btn">
+                ✨ Novo Acabamento
+            </a>
+            <a href="{{ url_for('users') }}" class="action-btn">
+                👥 Ver Todos os Usuários
+            </a>
+        </div>
+        
+        <!-- Usuários Recentes -->
+        <div class="recent-section">
+            <h3>👤 Usuários Recentes</h3>
+            {% if recent_users %}
+                {% for user in recent_users %}
+                    <div class="user-item">
+                        <div class="user-info">
+                            <div class="user-name">{{ user.name }}</div>
+                            <div class="user-details">
+                                CPF: {{ user.cpf }}
+                                {% if user.uploaded_file %}
+                                    | Arquivo: {{ user.uploaded_file }}
+                                    {% if user.num_pages %}({{ user.num_pages }} pág.){% endif %}
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="user-status {{ 'status-configured' if user.order_configured else 'status-pending' }}">
+                            {{ 'Configurado' if user.order_configured else 'Pendente' }}
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>Nenhum usuário cadastrado ainda.</p>
+            {% endif %}
+        </div>
+        
+        <!-- Estatísticas Adicionais -->
+        <div class="recent-section" style="margin-top: 20px;">
+            <h3>📈 Estatísticas</h3>
+            <p><strong>Papel mais usado:</strong> {{ stats.most_used_paper }}</p>
+            <p><strong>Taxa de conversão:</strong> {{ stats.conversion_rate }}% dos usuários configuraram pedidos</p>
+        </div>
+    </div>
+</body>
+</html>

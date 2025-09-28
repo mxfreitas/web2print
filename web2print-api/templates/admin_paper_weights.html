@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gramaturas - {{ paper.display_name }} - Admin Web2Print</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .admin-header {
+            background: #dc3545;
+            color: white;
+            padding: 15px 0;
+            margin-bottom: 30px;
+        }
+        .admin-nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .admin-nav h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .admin-nav .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+        .admin-nav a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            background: rgba(255,255,255,0.1);
+        }
+        .page-header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .page-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .weights-table {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .weights-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .weights-table th {
+            background: #f8f9fa;
+            padding: 15px;
+            text-align: left;
+            font-weight: bold;
+            color: #333;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .weights-table td {
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+        }
+        .price-value {
+            font-weight: bold;
+            color: #28a745;
+        }
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 12px;
+            border-radius: 3px;
+            text-decoration: none;
+        }
+        .btn-warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+        }
+        .breadcrumb {
+            background: #f8f9fa;
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .breadcrumb a {
+            color: #007bff;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-header">
+        <div class="container">
+            <nav class="admin-nav">
+                <h1>🏷️ Gramaturas - {{ paper.display_name }}</h1>
+                <div class="nav-links">
+                    <a href="{{ url_for('admin_dashboard') }}">📊 Dashboard</a>
+                    <a href="{{ url_for('admin_papers') }}">📄 Papéis</a>
+                    <a href="{{ url_for('admin_logout') }}">🚪 Sair</a>
+                </div>
+            </nav>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="{{ url_for('admin_papers') }}">📄 Tipos de Papel</a> &gt; 
+            <strong>{{ paper.display_name }}</strong> &gt; Gramaturas
+        </div>
+        
+        <div class="page-header">
+            <h3>📄 {{ paper.display_name }}</h3>
+            <p><strong>Nome técnico:</strong> {{ paper.name }}</p>
+            {% if paper.description %}
+                <p><strong>Descrição:</strong> {{ paper.description }}</p>
+            {% endif %}
+        </div>
+        
+        <div class="page-actions">
+            <h2>Gramaturas Disponíveis</h2>
+            <a href="{{ url_for('admin_paper_weights_create', paper_id=paper.id) }}" class="btn-primary">
+                ➕ Nova Gramatura
+            </a>
+        </div>
+        
+        {% if weights %}
+            <div class="weights-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Gramatura (g)</th>
+                            <th>Preço Colorido</th>
+                            <th>Preço Mono</th>
+                            <th>Status</th>
+                            <th>Criado em</th>
+                            <th>Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for weight in weights %}
+                            <tr>
+                                <td><strong>{{ weight.weight }}g</strong></td>
+                                <td><span class="price-value">R$ {{ "%.2f"|format(weight.price_color) }}</span></td>
+                                <td><span class="price-value">R$ {{ "%.2f"|format(weight.price_mono) }}</span></td>
+                                <td>
+                                    <span class="status-badge status-active">
+                                        {{ 'Ativo' if weight.active else 'Inativo' }}
+                                    </span>
+                                </td>
+                                <td>{{ weight.created_at.strftime('%d/%m/%Y') if weight.created_at else '-' }}</td>
+                                <td>
+                                    <div class="actions">
+                                        <a href="#" class="btn-sm btn-warning">
+                                            ✏️ Editar
+                                        </a>
+                                        <a href="#" class="btn-sm btn-danger" 
+                                           onclick="return confirm('Tem certeza que deseja excluir esta gramatura?')">
+                                            🗑️ Excluir
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="empty-state">
+                <h3>🏷️ Nenhuma gramatura cadastrada</h3>
+                <p>Este tipo de papel ainda não possui gramaturas definidas.</p>
+                <a href="{{ url_for('admin_paper_weights_create', paper_id=paper.id) }}" class="btn-primary">
+                    ➕ Adicionar Primeira Gramatura
+                </a>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>

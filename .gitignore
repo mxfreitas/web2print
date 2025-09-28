@@ -1,2 +1,70 @@
-instance/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Database
 *.db
+*.sqlite
+*.sqlite3
+instance/
+
+# Logs
+logs/
+*.log
+/tmp/logs/
+
+# Uploads (sensitive files)
+uploads/
+attached_assets/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WordPress
+wordpress-plugin/node_modules/
+wordpress-plugin/vendor/
+wordpress-plugin/*.zip
+
+# Temporary files
+*.tmp
+*.bak
+*.orig

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configurar Pedido - Web2Print</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .config-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: #f9f9f9;
+        }
+        .config-section h3 {
+            margin-top: 0;
+            color: #333;
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+        }
+        .form-group {
+            margin: 15px 0;
+        }
+        .form-group label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            margin-right: 20px;
+        }
+        .checkbox-item input {
+            margin-right: 8px;
+        }
+        .price-preview {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #007bff;
+        }
+        .file-info {
+            background: #f0f8ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #b3d9ff;
+        }
+        .btn-primary {
+            background: #007bff;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        .btn-primary:hover {
+            background: #0056b3;
+        }
+        .error {
+            color: #d32f2f;
+            background: #ffebee;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Configurar Seu Pedido</h1>
+        
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+
+        <div class="file-info">
+            <h3>📄 Arquivo: {{ user.uploaded_file }}</h3>
+            <p><strong>Total de páginas:</strong> {{ user.num_pages }}</p>
+            <p><strong>Páginas coloridas:</strong> {{ user.color_pages or 0 }}</p>
+            <p><strong>Páginas monocromáticas:</strong> {{ user.mono_pages or 0 }}</p>
+            <p><strong>Tipo detectado:</strong> 
+                {% if user.color_type == 'colorido' %}🎨 Colorido
+                {% elif user.color_type == 'monocromatico' %}⚫ Monocromático
+                {% else %}🎭 Misto{% endif %}
+            </p>
+        </div>
+
+        <form method="POST" id="configForm">
+            
+            <!-- Tipo de Impressão -->
+            <div class="config-section">
+                <h3>🖨️ Tipo de Impressão</h3>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="print_type" value="mixed" checked>
+                        <strong>Misto:</strong> Páginas coloridas em cor + monocromáticas em P&B (recomendado)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="print_type" value="color">
+                        <strong>Tudo Colorido:</strong> Imprimir todas as páginas em cores
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" name="print_type" value="mono">
+                        <strong>Tudo P&B:</strong> Imprimir todas as páginas em preto e branco
+                    </label>
+                </div>
+            </div>
+
+            <!-- Tipo de Papel -->
+            <div class="config-section">
+                <h3>📄 Tipo de Papel</h3>
+                <div class="form-group">
+                    <label for="paper_type">Escolha o papel:</label>
+                    <select name="paper_type" id="paper_type" class="form-control">
+                        <option value="sulfite">📋 Sulfite (padrão)</option>
+                        <option value="couche">✨ Couchê (brilhante)</option>
+                        <option value="reciclado">🌱 Reciclado (ecológico)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="paper_weight">Gramatura:</label>
+                    <select name="paper_weight" id="paper_weight" class="form-control">
+                        <option value="75">75g (fino)</option>
+                        <option value="90" selected>90g (padrão)</option>
+                        <option value="120">120g (encorpado)</option>
+                        <option value="115">115g (couchê médio)</option>
+                        <option value="150">150g (couchê pesado)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Encadernação -->
+            <div class="config-section">
+                <h3>📚 Encadernação</h3>
+                <div class="form-group">
+                    <label for="binding_type">Escolha a encadernação:</label>
+                    <select name="binding_type" id="binding_type" class="form-control">
+                        <option value="grampo">📎 Grampo (2 grampos) - R$ 2,00</option>
+                        <option value="spiral">🌀 Espiral plástica - R$ 5,00</option>
+                        <option value="wire-o">⚙️ Wire-o (espiral metálica) - R$ 8,00</option>
+                        <option value="capa-dura">📖 Capa dura - R$ 25,00</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Acabamentos -->
+            <div class="config-section">
+                <h3>✨ Acabamentos Especiais</h3>
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" name="finishing" value="laminacao" id="laminacao">
+                        <label for="laminacao">🔸 Laminação (+R$ 3,00)</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" name="finishing" value="verniz" id="verniz">
+                        <label for="verniz">✨ Verniz (+R$ 2,50)</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" name="finishing" value="dobra" id="dobra">
+                        <label for="dobra">📁 Dobra (+R$ 1,50)</label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" name="finishing" value="perfuracao" id="perfuracao">
+                        <label for="perfuracao">🕳️ Perfuração (+R$ 1,00)</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quantidade -->
+            <div class="config-section">
+                <h3>📊 Quantidade</h3>
+                <div class="form-group">
+                    <label for="copy_quantity">Número de cópias:</label>
+                    <input type="number" name="copy_quantity" id="copy_quantity" min="1" max="1000" value="1" class="form-control">
+                </div>
+            </div>
+
+            <!-- Preview de Preço -->
+            <div class="price-preview">
+                <h3>💰 Estimativa de Preço</h3>
+                <div id="priceBreakdown">
+                    <p>Configure as opções acima para ver o preço estimado</p>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-primary">💾 Salvar Configuração e Ver Carrinho</button>
+        </form>
+    </div>
+
+    <script>
+        // Atualizar opções de gramatura baseado no tipo de papel
+        document.getElementById('paper_type').addEventListener('change', function() {
+            const paperType = this.value;
+            const weightSelect = document.getElementById('paper_weight');
+            
+            // Limpar opções existentes
+            weightSelect.innerHTML = '';
+            
+            if (paperType === 'sulfite') {
+                weightSelect.innerHTML = `
+                    <option value="75">75g (fino)</option>
+                    <option value="90" selected>90g (padrão)</option>
+                    <option value="120">120g (encorpado)</option>
+                `;
+            } else if (paperType === 'couche') {
+                weightSelect.innerHTML = `
+                    <option value="90" selected>90g (couchê básico)</option>
+                    <option value="115">115g (couchê médio)</option>
+                    <option value="150">150g (couchê pesado)</option>
+                `;
+            } else if (paperType === 'reciclado') {
+                weightSelect.innerHTML = `
+                    <option value="75">75g (fino)</option>
+                    <option value="90" selected>90g (padrão)</option>
+                `;
+            }
+        });
+
+        // Formulário será enviado normalmente - acabamentos serão tratados pelo getlist() no backend
+    </script>
+</body>
+</html>
