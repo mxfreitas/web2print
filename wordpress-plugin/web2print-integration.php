@@ -63,6 +63,11 @@ class Web2PrintIntegration {
         add_action('wp_ajax_web2print_test_api_now', array($this, 'ajax_test_api_now'));
         add_action('wp_ajax_web2print_clear_metrics', array($this, 'ajax_clear_metrics'));
         add_action('wp_ajax_web2print_send_test_alert', array($this, 'ajax_send_test_alert'));
+        
+        // NOVO: INTERFACE AMIGÁVEL NO ADMIN DO PRODUTO
+        add_filter('woocommerce_product_data_tabs', array($this, 'add_product_data_tab'));
+        add_action('woocommerce_product_data_panels', array($this, 'add_product_data_panel'));
+        add_action('woocommerce_process_product_meta', array($this, 'save_product_data'));
     }
     
     public function init() {
@@ -1805,6 +1810,130 @@ class Web2PrintIntegration {
         wp_send_json_success(array(
             'message' => __('Alerta de teste enviado!', 'web2print-integration')
         ));
+    }
+    
+    /**
+     * NOVA INTERFACE AMIGÁVEL - Adicionar aba Web2Print nos dados do produto
+     */
+    public function add_product_data_tab($tabs) {
+        $tabs['web2print'] = array(
+            'label'    => __('Web2Print', 'web2print-integration'),
+            'target'   => 'web2print_product_data',
+            'class'    => array('show_if_simple', 'show_if_variable'),
+            'priority' => 75,
+        );
+        return $tabs;
+    }
+    
+    /**
+     * Conteúdo da aba Web2Print
+     */
+    public function add_product_data_panel() {
+        global $post;
+        
+        // Verificar se WooCommerce está ativo
+        if (!class_exists('WooCommerce')) {
+            return;
+        }
+        
+        $product = wc_get_product($post->ID);
+        $enabled = $product ? $product->get_meta('_enable_web2print') : '';
+        ?>
+        
+        <div id="web2print_product_data" class="panel woocommerce_options_panel">
+            <div class="options_group">
+                <h3 style="padding: 15px 12px; margin: 0; background: #f8f9fa; border-bottom: 1px solid #ddd;">
+                    📄 <?php _e('Configurações de Impressão', 'web2print-integration'); ?>
+                </h3>
+                
+                <div style="padding: 15px 12px;">
+                    <?php
+                    woocommerce_wp_checkbox(array(
+                        'id'            => '_enable_web2print',
+                        'label'         => __('Ativar Web2Print', 'web2print-integration'),
+                        'description'   => __('Permite que clientes façam upload de PDF e calculem custos de impressão automaticamente', 'web2print-integration'),
+                        'desc_tip'      => false,
+                        'value'         => $enabled === 'yes' ? 'yes' : '',
+                        'wrapper_class' => 'web2print-enable-field'
+                    ));
+                    ?>
+                    
+                    <div class="web2print-info-box" style="background: #e7f3ff; border: 1px solid #bee5eb; border-radius: 4px; padding: 12px; margin-top: 15px;">
+                        <h4 style="margin: 0 0 8px 0; color: #0c5460;">
+                            ℹ️ <?php _e('Como funciona', 'web2print-integration'); ?>
+                        </h4>
+                        <ul style="margin: 0; padding-left: 20px; color: #0c5460;">
+                            <li><?php _e('Cliente faz upload do PDF na página do produto', 'web2print-integration'); ?></li>
+                            <li><?php _e('Sistema analisa automaticamente cores e páginas', 'web2print-integration'); ?></li>
+                            <li><?php _e('Cliente configura papel, acabamento e quantidade', 'web2print-integration'); ?></li>
+                            <li><?php _e('Preço é calculado e aplicado automaticamente', 'web2print-integration'); ?></li>
+                        </ul>
+                        
+                        <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid #bee5eb;">
+                            <strong><?php _e('Status da API:', 'web2print-integration'); ?></strong>
+                            <?php
+                            $api_status = get_transient('web2print_api_status');
+                            if ($api_status && $api_status['status'] === 'ok') {
+                                echo '<span style="color: #28a745;">✅ Conectada (' . esc_html($api_status['response_time']) . 'ms)</span>';
+                            } else {
+                                echo '<span style="color: #dc3545;">❌ Offline</span>';
+                            }
+                            ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <style>
+        .web2print-enable-field label {
+            font-weight: 600 !important;
+            color: #2c3e50 !important;
+        }
+        
+        .web2print-enable-field .description {
+            color: #666 !important;
+            font-style: italic;
+        }
+        
+        #woocommerce-product-data .panel .web2print-info-box h4 {
+            font-size: 14px;
+        }
+        
+        #woocommerce-product-data .panel .web2print-info-box ul li {
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        </style>
+        <?php
+    }
+    
+    /**
+     * Salvar dados da aba Web2Print
+     */
+    public function save_product_data($post_id) {
+        // Verificar se é um produto
+        if (get_post_type($post_id) !== 'product') {
+            return;
+        }
+        
+        // Verificar permissões
+        if (!current_user_can('edit_post', $post_id)) {
+            return;
+        }
+        
+        $product = wc_get_product($post_id);
+        if (!$product) {
+            return;
+        }
+        
+        // Salvar checkbox Web2Print
+        $enable_web2print = isset($_POST['_enable_web2print']) ? 'yes' : 'no';
+        $product->update_meta_data('_enable_web2print', $enable_web2print);
+        $product->save();
+        
+        // Log para debugging
+        error_log(sprintf('Web2Print: Produto %d configurado como %s', $post_id, $enable_web2print));
     }
 }
 

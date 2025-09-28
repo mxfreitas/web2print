@@ -19,7 +19,12 @@ Plugin de integração para WooCommerce que conecta com a API Web2Print para cá
 
 4. **Configuração do Produto:**
    - Edite um produto WooCommerce
-   - Na seção "Dados do Produto", adicione um campo personalizado:
+   - Na aba "**Web2Print**" nos Dados do Produto:
+     - ☑️ Marque "**Ativar Web2Print**"
+     - Salve o produto
+
+   *Alternativa manual:*
+   - Adicione um campo personalizado:
      - Meta Key: `_enable_web2print`
      - Meta Value: `yes`
 
